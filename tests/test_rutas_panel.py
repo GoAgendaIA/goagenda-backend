@@ -1,6 +1,7 @@
 """Rutas HTTP del panel del negocio (contra la app real de main.py, Supabase en memoria y auth real)."""
 
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -303,6 +304,128 @@ def test_super_admin(cliente, como, db, capsys):
     db.fallar_en["business_hours"] = RuntimeError("caido")
     assert cliente.post("/admin/businesses", json={"name": "Sin horario"}, headers=como("root")).status_code == 200
     assert "No se pudo crear el horario por defecto" in capsys.readouterr().out
+
+
+def test_super_admins_listar_y_crear(cliente, como, db):
+    db.sembrar("super_admins", {"user_id": "root", "created_at": "2026-01-01"})
+    db.auth.admin.usuarios = [SimpleNamespace(id="root", email="root@goagenda.test"), SimpleNamespace(id="sin-email", email=None)]
+    db.sembrar("super_admins", {"user_id": "sin-email", "created_at": "2026-02-01"})
+
+    assert cliente.get("/admin/super-admins").status_code == 401
+    assert cliente.get("/admin/super-admins", headers=como("normal")).status_code == 403
+    lista = cliente.get("/admin/super-admins", headers=como("root")).json()["super_admins"]
+    assert [(a["user_id"], a["email"], a["is_me"]) for a in lista] == [("sin-email", None, False), ("root", "root@goagenda.test", True)]
+
+    r = cliente.post("/admin/super-admins", json={"email": "  Nuevo@GoAgenda.test ", "password": "clave-segura"}, headers=como("root"))
+    assert r.status_code == 200 and r.json()["super_admin"]["email"] == "nuevo@goagenda.test"
+    nuevo_id = r.json()["super_admin"]["user_id"]
+    assert any(f["user_id"] == nuevo_id for f in db.filas("super_admins"))
+    assert [u.email for u in db.auth.admin.usuarios][-1] == "nuevo@goagenda.test"
+
+    # La cuenta nueva ya figura en la lista con su email.
+    emails = {a["user_id"]: a["email"] for a in cliente.get("/admin/super-admins", headers=como("root")).json()["super_admins"]}
+    assert emails[nuevo_id] == "nuevo@goagenda.test"
+
+
+def test_revocar_super_admin(cliente, como, db, monkeypatch):
+    db.auth.admin.usuarios = [
+        SimpleNamespace(id="root", email="root@goagenda.test"),
+        SimpleNamespace(id="otro", email="otro@goagenda.test"),
+        SimpleNamespace(id="jefe", email="Jefe@GoAgenda.test"),
+    ]
+    db.sembrar("super_admins", {"user_id": "root"}, {"user_id": "otro"}, {"user_id": "jefe"})
+    monkeypatch.setenv("SUPER_ADMIN_EMAIL", "jefe@goagenda.test")
+    h = como("root")
+
+    assert cliente.delete("/admin/super-admins/otro").status_code == 401
+    assert cliente.delete("/admin/super-admins/otro", headers=como("normal")).status_code == 403
+    # No puede revocarse a si mismo, ni la cuenta principal, ni una cuenta que no es super admin.
+    assert cliente.delete("/admin/super-admins/root", headers=h).status_code == 400
+    r = cliente.delete("/admin/super-admins/jefe", headers=h)
+    assert r.status_code == 400 and "cuenta principal" in r.json()["detail"]
+    assert cliente.delete("/admin/super-admins/nadie", headers=h).status_code == 404
+    assert {f["user_id"] for f in db.filas("super_admins")} == {"root", "otro", "jefe"}
+
+    # La lista marca la cuenta principal para que el front no ofrezca revocarla.
+    lista = {a["user_id"]: a["is_primary"] for a in cliente.get("/admin/super-admins", headers=h).json()["super_admins"]}
+    assert lista == {"root": False, "otro": False, "jefe": True}
+
+    r = cliente.delete("/admin/super-admins/otro", headers=h)
+    assert r.status_code == 200 and r.json() == {"revoked": True, "user_id": "otro"}
+    assert {f["user_id"] for f in db.filas("super_admins")} == {"root", "jefe"}
+    # La cuenta de Auth se conserva, pero ya no puede usar /admin.
+    assert [u.id for u in db.auth.admin.usuarios if u.id == "otro"] == ["otro"]
+    db.auth.usuarios_por_token["tok-otro"] = "otro"
+    assert cliente.get("/admin/super-admins", headers={"Authorization": "Bearer tok-otro"}).status_code == 403
+
+
+def test_super_admins_validaciones(cliente, como, db):
+    db.sembrar("super_admins", {"user_id": "root"})
+    h = como("root")
+    assert cliente.post("/admin/super-admins", json={"email": "no-es-email", "password": "clave-segura"}, headers=h).status_code == 400
+    assert cliente.post("/admin/super-admins", json={"email": "a@b.co", "password": "corta"}, headers=h).status_code == 400
+    assert cliente.post("/admin/super-admins", json={"email": "a@b.co", "password": "clave-segura"}, headers=como("normal")).status_code == 403
+    assert cliente.post("/admin/super-admins", json={"email": "a@b.co"}, headers=h).status_code == 422
+
+    # No promueve una cuenta que ya existe (por ejemplo un dueño de negocio).
+    db.auth.admin.usuarios = [SimpleNamespace(id="dueno", email="dueno@negocio.co")]
+    r = cliente.post("/admin/super-admins", json={"email": "DUENO@negocio.co", "password": "clave-segura"}, headers=h)
+    assert r.status_code == 409
+    assert [f["user_id"] for f in db.filas("super_admins")] == ["root"]
+
+
+def test_super_admins_fallas_de_supabase(cliente, como, db, monkeypatch, capsys):
+    from tests.fakes import _Consulta
+
+    db.sembrar("super_admins", {"user_id": "root"})
+    h = como("root")
+
+    original_create = db.auth.admin.create_user
+
+    def rechaza(atributos):
+        raise RuntimeError("weak password")
+
+    monkeypatch.setattr(db.auth.admin, "create_user", rechaza)
+    r = cliente.post("/admin/super-admins", json={"email": "a@b.co", "password": "clave-segura"}, headers=h)
+    assert r.status_code == 400 and "No se pudo crear la cuenta" in r.json()["detail"]
+    monkeypatch.setattr(db.auth.admin, "create_user", original_create)
+
+    # Falla solo el upsert del rol (la verificacion de super admin sigue funcionando).
+    original = _Consulta.execute
+
+    def upsert_roto(self):
+        if self._tabla == "super_admins" and self._operacion == "upsert":
+            raise RuntimeError("caido")
+        return original(self)
+
+    monkeypatch.setattr(_Consulta, "execute", upsert_roto)
+
+    # No queda una cuenta huerfana: se intenta borrar la que se acababa de crear.
+    eliminados = []
+    monkeypatch.setattr(db.auth.admin, "delete_user", lambda uid: eliminados.append(uid), raising=False)
+    r = cliente.post("/admin/super-admins", json={"email": "b@b.co", "password": "clave-segura"}, headers=h)
+    assert r.status_code == 500 and len(eliminados) == 1
+
+    # Si ademas la limpieza falla, igual responde el error y lo deja en el log.
+    def limpieza_rota(uid):
+        raise RuntimeError("sin permisos")
+
+    monkeypatch.setattr(db.auth.admin, "delete_user", limpieza_rota, raising=False)
+    r = cliente.post("/admin/super-admins", json={"email": "c@b.co", "password": "clave-segura"}, headers=h)
+    assert r.status_code == 500 and "Tampoco se pudo limpiar la cuenta" in capsys.readouterr().out
+
+
+def test_listar_super_admins_pagina_los_usuarios(cliente, como, db):
+    db.auth.admin.usuarios = [SimpleNamespace(id=f"u{i}", email=f"u{i}@x.co") for i in range(250)]
+    db.sembrar("super_admins", {"user_id": "u0"}, {"user_id": "u249"})
+    lista = cliente.get("/admin/super-admins", headers=como("u0")).json()["super_admins"]
+    assert {a["user_id"]: a["email"] for a in lista} == {"u0": "u0@x.co", "u249": "u249@x.co"}
+    # Un usuario de Supabase que ya no aparece: la lista no se queda en bucle.
+    db.sembrar("super_admins", {"user_id": "fantasma"})
+    assert {a["user_id"] for a in cliente.get("/admin/super-admins", headers=como("u0")).json()["super_admins"]} >= {"fantasma"}
+    # Con exactamente una pagina llena, la siguiente viene vacia y tampoco se queda en bucle.
+    db.auth.admin.usuarios = db.auth.admin.usuarios[:200]
+    assert cliente.get("/admin/super-admins", headers=como("u0")).status_code == 200
 
 
 def test_crear_negocio_sin_respuesta(cliente, como, db, monkeypatch):
