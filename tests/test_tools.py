@@ -389,6 +389,32 @@ class TestCrearCita:
         _crear(servicio="Tinte", employee_fijo=False)
         assert solicitud.call_args.kwargs["employee_id"] is None
 
+    def test_la_cita_creada_marca_la_conversacion_y_el_origen_es_ia(self, negocio, db, monkeypatch):
+        from services import appointment_confirmation as ac
+
+        finalizar = MagicMock(return_value={"id": "cita-1"})
+        monkeypatch.setattr(ac, "finalizar_creacion_cita", finalizar)
+        _crear()
+        fila = db.filas("chat_sessions")[0]
+        assert fila["session_id"] == "sess-1" and fila["ended_in_appointment"] is True and fila["appointment_id"] == "cita-1"
+
+    def test_cita_con_abono_marca_la_conversacion_solo_si_hubo_link(self, negocio, db, monkeypatch):
+        from services import appointment_confirmation as ac, wompi_payment_requests as wpr
+
+        monkeypatch.setattr(ac, "crear_cita_pendiente_pago", lambda **kw: {"id": "cita-p"})
+        monkeypatch.setattr(wpr, "crear_solicitud_pago", lambda **kw: None)
+        _crear(servicio="Tinte")
+        assert not [f for f in db.filas("chat_sessions") if f.get("ended_in_appointment")]
+
+        monkeypatch.setattr(wpr, "crear_solicitud_pago",
+                            lambda **kw: {"checkout_url": "https://x", "amount_in_cents": 1, "description": "Abono"})
+        _crear(servicio="Tinte")
+        assert db.filas("chat_sessions")[0]["appointment_id"] == "cita-p"
+
+    def test_escalar_al_equipo_marca_la_conversacion(self, negocio, db):
+        t._notificar_negocio_escalamiento(BIZ, "sess-1", "Ana")
+        assert db.filas("chat_sessions")[0]["handed_off"] is True
+
     def test_cita_con_abono_horario_tomado_en_el_mismo_instante(self, negocio, monkeypatch):
         from services import appointment_confirmation as ac
 

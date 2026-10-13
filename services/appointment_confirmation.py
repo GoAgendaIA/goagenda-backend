@@ -41,6 +41,7 @@ def finalizar_creacion_cita(
     address: str | None = None,
     home_visit_zone: str | None = None,
     home_visit_fee: float = 0,
+    source: str = "ai",
 ) -> dict | None:
     """Crea la cita y dispara sus notificaciones. Retorna la fila creada, o None si create_appointment no devolvio nada."""
     resultado = create_appointment(
@@ -53,6 +54,7 @@ def finalizar_creacion_cita(
         address=address,
         home_visit_zone=home_visit_zone,
         home_visit_fee=home_visit_fee,
+        source=source,
     )
 
     if not resultado:
@@ -102,6 +104,7 @@ def crear_cita_pendiente_pago(
     address: str | None = None,
     home_visit_zone: str | None = None,
     home_visit_fee: float = 0,
+    source: str = "ai",
 ) -> dict | None:
     """
     Crea la cita en estado "pending_payment": bloquea el cupo (cuenta para
@@ -131,6 +134,7 @@ def crear_cita_pendiente_pago(
             home_visit_zone=home_visit_zone,
             home_visit_fee=home_visit_fee,
             status="pending_payment",
+            source=source,
         )
     except APIError as e:
         if getattr(e, "code", None) == _CODIGO_VIOLACION_UNICA:

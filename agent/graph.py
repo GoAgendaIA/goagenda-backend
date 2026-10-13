@@ -22,6 +22,7 @@ from core.settings import (
     OPENAI_API_KEY,
 )
 from services.ai_usage_tracking import registrar_uso
+from services.conversation_tracking import marcar_conversacion, registrar_turno_conversacion
 from services.db import (
     get_business_by_id,
     get_employee_services,
@@ -492,6 +493,7 @@ def enviar_mensaje(
             entrada.setdefault("client_phone", None)
             entrada.setdefault("employee_id", None)
 
+        registrar_turno_conversacion(business_id, session_id)
         resultado = GRAPH.invoke(entrada, config=config)
     except GraphRecursionError:
         try:
@@ -529,6 +531,7 @@ def enviar_respuesta_humana(business_id: str, session_id: str, mensaje: str) -> 
     """
     config = _thread_config(business_id, session_id)
     GRAPH.update_state(config, {"messages": [AIMessage(content=mensaje)], "transferido": True})
+    marcar_conversacion(business_id, session_id, handed_off=True)
 
 
 def enviar_notificacion_sistema(business_id: str, session_id: str, mensaje: str) -> None:

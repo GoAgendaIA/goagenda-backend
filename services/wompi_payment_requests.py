@@ -419,7 +419,7 @@ def expirar_solicitudes_vencidas() -> int:
     if appointment_ids:
         # Solo toca las que SIGUEN pending_payment: si ya se confirmaron o
         # se cancelaron por otra via mientras tanto, se dejan tal cual.
-        supabase.table("appointments").update({"status": "cancelled"}).in_(
+        supabase.table("appointments").update({"status": "cancelled", "cancelled_by": "system"}).in_(
             "id", appointment_ids
         ).eq("status", "pending_payment").execute()
 

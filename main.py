@@ -24,6 +24,7 @@ from routes.baileys_routes import router as baileys_router
 from routes.excluded_chats_routes import router as excluded_chats_router
 from routes.qr_card_routes import router as qr_card_router
 from routes.admin_routes import router as admin_router
+from routes.metrics_routes import router as metrics_router
 from routes.invitation_codes_routes import router as invitation_codes_router
 from routes.employees_routes import router as employees_router
 from routes.me_routes import router as me_router
@@ -65,6 +66,7 @@ TAGS_METADATA = [
     {"name": "excluded-chats", "description": "Numeros excluidos de las respuestas automaticas del bot para un negocio."},
     {"name": "qr-card", "description": "Generacion de la tarjeta QR imprimible con el enlace del chat de un negocio."},
     {"name": "invitations", "description": "Codigos de invitacion de 6 caracteres: el dueño invita empleados, y cualquiera los valida para quedar ligado a un negocio."},
+    {"name": "metricas", "description": "Centro de metricas y analitica (solo super admin): panel global de la plataforma y panel individual por negocio, con filtros por periodo, origen IA/manual, estados, conversion y alertas."},
     {"name": "super-admin", "description": "Endpoints exclusivos del super admin: crear negocios, bloquearlos, y generar sus codigos de invitacion de dueño."},
     {"name": "whatsapp", "description": "Integracion saliente de WhatsApp (Meta Cloud API y el microservicio Baileys): recordatorios y confirmacion de citas. El bot conversacional ya no responde por aqui."},
     {"name": "realtime", "description": "WebSocket de notificaciones de citas en tiempo real para el panel (ver README, seccion 'WebSocket de tiempo real'). No aparece en este /docs porque OpenAPI no documenta WebSockets."},
@@ -101,6 +103,7 @@ app.include_router(baileys_router)
 app.include_router(excluded_chats_router)
 app.include_router(qr_card_router)
 app.include_router(admin_router)
+app.include_router(metrics_router)
 app.include_router(invitation_codes_router)
 app.include_router(employees_router)
 app.include_router(me_router)

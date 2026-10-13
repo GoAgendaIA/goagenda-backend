@@ -137,6 +137,7 @@ def create_appointment(
     home_visit_zone: str | None = None,
     home_visit_fee: float = 0,
     status: str = "confirmed",
+    source: str = "manual",
 ):
     """
     Crea una nueva cita, ligada al empleado que la atiende. Si trae
@@ -149,6 +150,10 @@ def create_appointment(
     migracion hace que este insert falle (postgrest.exceptions.APIError,
     code "23505") si alguien mas ya tiene ese mismo horario reservado;
     el caller debe atrapar ese caso.
+
+    `source` registra quien origino la cita ("ai" cuando la agenda el
+    asistente del chat, "manual" cuando la crea el negocio desde el panel);
+    es la base de las metricas de IA vs. manual (services/metrics.py).
     """
     fila = {
         "business_id": business_id,
@@ -158,6 +163,7 @@ def create_appointment(
         "scheduled_at": scheduled_at,
         "employee_id": employee_id,
         "status": status,
+        "source": source,
     }
     if address:
         fila["is_home_visit"] = True
@@ -169,13 +175,18 @@ def create_appointment(
     return response.data
 
 
-def update_appointment_status(appointment_id: str, status: str) -> dict | None:
+def update_appointment_status(appointment_id: str, status: str, actor: str | None = None) -> dict | None:
     """
     Cambia el estado de una cita existente (ej. "pending_payment" ->
     "confirmed" cuando Wompi aprueba el abono, o -> "cancelled" si el
     link de pago vence sin pagar). Ver services/appointment_confirmation.py.
+    `actor` ("ai" | "system") queda en cancelled_by cuando status es
+    "cancelled", para las metricas de cancelaciones por la IA.
     """
-    response = supabase.table("appointments").update({"status": status}).eq("id", appointment_id).execute()
+    campos = {"status": status}
+    if status == "cancelled" and actor:
+        campos["cancelled_by"] = actor
+    response = supabase.table("appointments").update(campos).eq("id", appointment_id).execute()
     return response.data[0] if response.data else None
 
 def get_business_by_whatsapp_phone_id(phone_number_id: str):
@@ -203,7 +214,7 @@ def cancel_appointment(appointment_id: str, client_phone: str):
     """
     response = (
         supabase.table("appointments")
-        .update({"status": "cancelled"})
+        .update({"status": "cancelled", "cancelled_by": "ai"})
         .eq("id", appointment_id)
         .eq("client_phone", client_phone)
         .execute()
@@ -333,6 +344,17 @@ def update_appointment_schedule(
     Si is_home_visit es None, la modalidad actual de la cita no se toca.
     """
     campos = {"scheduled_at": nueva_fecha_hora}
+    # Solo la IA llama a esta funcion (las ediciones del panel van directo a
+    # Supabase): se suma al contador de reprogramaciones hechas por la IA.
+    # El contador total lo lleva el trigger de metricas_analitica.sql.
+    actual = (
+        supabase.table("appointments")
+        .select("rescheduled_by_ai_count")
+        .eq("id", appointment_id)
+        .execute()
+    )
+    if actual.data:
+        campos["rescheduled_by_ai_count"] = (actual.data[0].get("rescheduled_by_ai_count") or 0) + 1
     if is_home_visit is not None:
         campos["is_home_visit"] = is_home_visit
         campos["address"] = address

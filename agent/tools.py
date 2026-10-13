@@ -382,6 +382,10 @@ def _notificar_negocio_escalamiento(business_id: str, session_id: str, nombre_cl
     conectada) — cualquiera de los dos que llegue le da al dueño el link
     a esta conversacion (business_id + session_id).
     """
+    from services.conversation_tracking import marcar_conversacion
+
+    marcar_conversacion(business_id, session_id, handed_off=True)
+
     business = get_business_by_id(business_id)
     fcm_token = business.get("fcm_token") if business else None
     if fcm_token:
@@ -967,7 +971,7 @@ def crear_cita(
             # forma de pagarlo, se libera de inmediato.
             from services.db import update_appointment_status
 
-            update_appointment_status(cita_pendiente["id"], "cancelled")
+            update_appointment_status(cita_pendiente["id"], "cancelled", actor="system")
             return {
                 "error": (
                     "Este servicio requiere un abono para agendar, pero no fue posible generar el link de pago "
@@ -975,6 +979,12 @@ def crear_cita(
                     "cliente y ofrece transferir_a_equipo si insiste en agendar ahora."
                 )
             }
+
+        from services.conversation_tracking import marcar_conversacion
+
+        # El cupo ya esta reservado (aunque falte el pago): la conversacion
+        # termino en cita. Solo se marca si el link de pago si se genero.
+        marcar_conversacion(business_id, session_id, ended_in_appointment=True, appointment_id=cita_pendiente["id"])
 
         return {
             "pago_pendiente": True,
@@ -997,6 +1007,11 @@ def crear_cita(
         home_visit_zone=zona_nombre,
         home_visit_fee=zona_fee,
     )
+
+    if cita:
+        from services.conversation_tracking import marcar_conversacion
+
+        marcar_conversacion(business_id, session_id, ended_in_appointment=True, appointment_id=cita.get("id"))
 
     return {"cita_creada": [cita] if cita else []}
 
