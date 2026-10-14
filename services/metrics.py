@@ -295,10 +295,8 @@ def _resumen_periodo(
         if c.get("status") == "cancelled":
             continue
         precio = float((servicios.get(c.get("service_id")) or {}).get("price") or 0)
-        programada = _a_local(c.get("scheduled_at"))
-        if programada is None:
-            continue
-        if c.get("status") == "completed" or programada < ahora:
+        # programadas_periodo ya descarto las fechas vacias o invalidas.
+        if c.get("status") == "completed" or _a_local(c.get("scheduled_at")) < ahora:
             ingresos_completadas += precio
             recargos_domicilio += float(c.get("home_visit_fee") or 0)
         elif c.get("status") in ("confirmed", "pending", "pending_payment"):
