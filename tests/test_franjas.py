@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from agent import graph as g
 from tests.test_fase3 import BIZ, enviar, hora_fija, llamada, modelos, negocio, texto  # noqa: F401
 
-CANONICO = "🌅 *En la mañana:* 9:00 am, 9:30 am\n🌇 *En la tarde:* 2:00 pm, 3:30 pm"
+CANONICO = "🌅 *En la mañana:*\n• 9:00 am\n• 9:30 am\n🌇 *En la tarde:*\n• 2:00 pm\n• 3:30 pm"
 
 
 def _horas(contenido=None):
@@ -24,6 +24,8 @@ def _horas(contenido=None):
     "☀️ *Manana:* 9:00 am, 10:00 am\n🌙 *Tarde:* 5:00 pm",
     "🌅 *En la mañana:* 9:00 am\n🌇 *En la tarde:* 2:00 pm",
     "En la mañana: 9:00 am\nen la tarde: 2:00 pm",
+    "🌅 *En la mañana:*\n- 9:00 am\n- 9:30 am\n🌇 *En la tarde:*\n- 2:00 pm\n- 3:30 pm",
+    "Mañana:\n🕐 9:00 am\n🕐 10:00 am\nTarde:\n🕐 2:00 pm",
 ])
 def test_las_franjas_reescritas_se_reemplazan_por_las_de_la_herramienta(reescrito):
     texto_modelo = f"Estas son las horas para el viernes:\n{reescrito}\n¿Cuál prefieres?"
@@ -57,6 +59,12 @@ def test_en_el_chat_real_el_cliente_recibe_las_franjas_en_negrita(negocio, model
         texto("Estas son las horas disponibles:\nMañana: 9:00 am, 9:30 am\nTarde: 2:00 pm\n¿Cuál prefieres?"),
     ]
     respuesta, _ = enviar("quiero para el sábado", str(uuid.uuid4()), employee_id="emp-1")
-    assert "🌅 *En la mañana:* 9:00 am, 9:30 am, 10:00 am" in respuesta
-    assert "🌇 *En la tarde:* " in respuesta and respuesta.rstrip().endswith("¿Cuál prefieres?")
+    assert "🌅 *En la mañana:*\n• 9:00 am\n• 9:30 am\n• 10:00 am" in respuesta
+    assert "🌇 *En la tarde:*\n• " in respuesta and respuesta.rstrip().endswith("¿Cuál prefieres?")
     assert "Mañana: 9:00 am, 9:30 am\n" not in respuesta
+
+
+def test_no_se_borran_horas_que_no_estan_bajo_un_titulo_de_franja():
+    texto_modelo = "Tu cita sería a las:\n9:00 am\nEn la mañana: 9:30 am\n10:00 am\n¿Te sirve?"
+    resultado = g._con_franjas_canonicas(texto_modelo, [_horas()])
+    assert resultado == f"Tu cita sería a las:\n9:00 am\n{CANONICO}\n¿Te sirve?"

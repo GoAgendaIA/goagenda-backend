@@ -744,17 +744,21 @@ def _mensaje_error_tecnico(business_id: str) -> str:
         return MENSAJE_ERROR_TECNICO
 
 
-# Linea de franja que el modelo reescribio a su manera ("Mañana: ...", "🌅 *En la mañana:* ...", "**Tarde**: ...").
+# Titulo de franja que el modelo reescribio a su manera ("Mañana: ...", "🌅 *En la mañana:* ...", "**Tarde**: ...").
 _LINEA_FRANJA = re.compile(r"^\s*[^\w\s*]{0,3}\s*\*{0,2}(?:en la )?(?:Ma[ñn]ana|Tarde)\*{0,2}\s*:\s*\*{0,2}.*$", re.IGNORECASE)
+# Una hora suelta en su propia linea ("• 9:00 am", "- 2:30 pm", "🕐 9:00 am"): el modelo las lista hacia abajo.
+_LINEA_HORA = re.compile(r"^\s*[^\w\s]{0,3}\s*\d{1,2}:\d{2}\s*[ap]\.?\s?m\.?\s*$", re.IGNORECASE)
 
 
 def _con_franjas_canonicas(texto: str, mensajes_nuevos: list) -> str:
     """
-    Si en este turno se consultaron horas, las lineas "En la mañana"/"En la tarde" de la respuesta
-    se reemplazan por las que armo la herramienta (horas_por_franja), con su emoji y
-    negrita. El prompt le pide al modelo copiarlas tal cual, pero a veces las
-    reescribe (sin los asteriscos, o con otras horas); como el formato y las horas
-    son datos, no redaccion, se imponen aqui en vez de confiar en el modelo.
+    Si en este turno se consultaron horas, el bloque de franjas de la respuesta
+    (los titulos "En la mañana"/"En la tarde" y las horas que les siguen) se
+    reemplaza por el que armo la herramienta (horas_por_franja), con su emoji,
+    negrita y una hora por linea. El prompt le pide al modelo copiarlo tal cual,
+    pero a veces lo reescribe (sin los asteriscos, en una sola linea o con otras
+    horas); como el formato y las horas son datos, no redaccion, se imponen aqui
+    en vez de confiar en el modelo.
     """
     canonico = None
     for m in reversed(mensajes_nuevos):
@@ -767,11 +771,16 @@ def _con_franjas_canonicas(texto: str, mensajes_nuevos: list) -> str:
     if not canonico:
         return texto
     lineas = texto.split("\n")
-    indices = [i for i, linea in enumerate(lineas) if _LINEA_FRANJA.match(linea)]
-    if not indices:
+    quitar: set[int] = set()
+    for i, linea in enumerate(lineas):
+        if _LINEA_FRANJA.match(linea):
+            quitar.add(i)
+        elif (i - 1) in quitar and _LINEA_HORA.match(linea):
+            quitar.add(i)  # las horas que el modelo puso debajo de un titulo de franja
+    if not quitar:
         return texto
-    resto = [linea for i, linea in enumerate(lineas) if i not in set(indices)]
-    posicion = indices[0]
+    posicion = min(quitar)
+    resto = [linea for i, linea in enumerate(lineas) if i not in quitar]
     return "\n".join(resto[:posicion] + canonico.split("\n") + resto[posicion:])
 
 
