@@ -17,6 +17,7 @@ from core.settings import (
     CHAT_MODEL_NAME,
     DATABASE_URL,
     DB_POOL_MAX_SIZE,
+    LLM_MAX_TOKENS_SALIDA,
     DB_POOL_MIN_SIZE,
     DB_POOL_TIMEOUT,
     OPENAI_API_KEY,
@@ -90,7 +91,16 @@ _pool = ConnectionPool(
 _checkpointer = PostgresSaver(_pool)
 _checkpointer.setup()
 
-_llm = ChatOpenAI(model=CHAT_MODEL_NAME, api_key=OPENAI_API_KEY, temperature=LLM_TEMPERATURE, max_retries=3)
+# max_retries=0: los reintentos ya los hace _invocar_modelo (LLM_MAX_INTENTOS).
+# Con max_retries=3 aqui, un fallo se multiplicaba hasta 9 intentos.
+# max_tokens acota la respuesta (las tool calls tambien cuentan).
+_llm = ChatOpenAI(
+    model=CHAT_MODEL_NAME,
+    api_key=OPENAI_API_KEY,
+    temperature=LLM_TEMPERATURE,
+    max_retries=0,
+    max_tokens=LLM_MAX_TOKENS_SALIDA,
+)
 _model = _llm.bind_tools(TOOLS)
 # Mismo modelo, pero obligado a llamar consultar_servicios_disponibles: se
 # usa solo cuando _precios_no_respaldados detecta que la respuesta normal
@@ -221,7 +231,7 @@ def _agent_node(state: AgentState) -> dict:
 
     entrada = [SystemMessage(content=system)] + _historial_valido_para_modelo(state["messages"])
 
-    response = _invocar_modelo(_model, entrada, state["business_id"])
+    response = _invocar_modelo(_model, entrada, state["business_id"], session_id=state.get("session_id"))
     if response is None:
         mensaje = MENSAJE_ERROR_TECNICO + "\n\n" + construir_mensaje_contacto_humano(business)
         return {"messages": [AIMessage(content=mensaje)]}
@@ -250,7 +260,13 @@ def _agent_node(state: AgentState) -> dict:
                 f"[anti-alucinacion] negocio={state['business_id']} {motivo}; "
                 f"se descarta la respuesta y se fuerza consultar_servicios_disponibles"
             )
-            forzada = _invocar_modelo(_model_forzar_servicios, entrada, state["business_id"])
+            forzada = _invocar_modelo(
+                _model_forzar_servicios,
+                entrada,
+                state["business_id"],
+                tipo="re_llamada_anti_alucinacion",
+                session_id=state.get("session_id"),
+            )
             if forzada is not None and getattr(forzada, "tool_calls", None):
                 response = forzada
 
@@ -273,7 +289,7 @@ def _consulto_servicios_en_este_turno(mensajes: list) -> bool:
     return False
 
 
-def _invocar_modelo(modelo, entrada: list, business_id: str):
+def _invocar_modelo(modelo, entrada: list, business_id: str, tipo: str = "turno", session_id: str | None = None):
     """
     Invoca el modelo y registra el consumo de tokens. Reintenta hasta
     LLM_MAX_INTENTOS veces antes de rendirse (devuelve None): la falla
@@ -295,11 +311,15 @@ def _invocar_modelo(modelo, entrada: list, business_id: str):
     if response is not None:
         usage = getattr(response, "usage_metadata", None) or {}
         if usage:
+            detalle = usage.get("input_token_details") or {}
             registrar_uso(
                 business_id,
                 usage.get("input_tokens", 0),
                 usage.get("output_tokens", 0),
                 usage.get("total_tokens", 0),
+                cached_tokens=detalle.get("cache_read", 0) or 0,
+                tipo=tipo,
+                session_id=session_id,
             )
     return response
 

@@ -359,6 +359,66 @@ def test_revocar_super_admin(cliente, como, db, monkeypatch):
     assert cliente.get("/admin/super-admins", headers={"Authorization": "Bearer tok-otro"}).status_code == 403
 
 
+def test_presupuestos_de_ia_listar_y_editar(cliente, como, db, monkeypatch):
+    from datetime import datetime
+
+    from core import settings
+    from services import ai_usage_tracking as uso
+
+    db.sembrar("super_admins", {"user_id": "root"})
+    db.sembrar("businesses",
+               {"id": "b1", "name": "Barberia", "monthly_ai_budget_usd": 10},
+               {"id": "b2", "name": "Spa", "monthly_ai_budget_usd": None})
+    ahora = datetime.now().isoformat()
+    db.sembrar("ai_usage_log",
+               {"business_id": "b1", "estimated_cost_usd": 2.5, "created_at": ahora},
+               {"business_id": "b1", "estimated_cost_usd": 0.5, "created_at": ahora},
+               {"business_id": "b2", "estimated_cost_usd": 6.0, "created_at": ahora},
+               {"business_id": "b1", "estimated_cost_usd": 99, "created_at": "2020-01-01T00:00:00"})  # otro mes: no cuenta
+
+    assert cliente.get("/admin/ai-budgets").status_code == 401
+    assert cliente.get("/admin/ai-budgets", headers=como("normal")).status_code == 403
+    r = cliente.get("/admin/ai-budgets", headers=como("root")).json()
+    assert r["presupuesto_por_defecto_usd"] == 5.0 and r["corte_duro_activo"] is False
+    filas = {f["business_id"]: f for f in r["presupuestos"]}
+    assert filas["b1"] == {"business_id": "b1", "name": "Barberia", "presupuesto_guardado_usd": 10,
+                           "presupuesto_efectivo_usd": 10, "gasto_mes_usd": 3.0, "porcentaje_usado": 30.0}
+    # Sin presupuesto guardado rige el valor por defecto.
+    assert filas["b2"]["presupuesto_guardado_usd"] is None and filas["b2"]["presupuesto_efectivo_usd"] == 5.0
+    assert filas["b2"]["porcentaje_usado"] == 120.0
+
+    # Editar: aplica de inmediato aunque el corte este cacheado como agotado.
+    monkeypatch.setattr(settings, "AI_PRESUPUESTO_CORTE_DURO", True)
+    uso.limpiar_cache_presupuesto()
+    assert uso.presupuesto_agotado({"id": "b2", "monthly_ai_budget_usd": None, "fcm_token": None}) is True
+    r = cliente.put("/admin/businesses/b2/ai-budget", json={"monthly_ai_budget_usd": 20.256}, headers=como("root"))
+    assert r.status_code == 200 and r.json() == {"business_id": "b2", "monthly_ai_budget_usd": 20.26}
+    assert uso.presupuesto_agotado({"id": "b2", "monthly_ai_budget_usd": 20.26}) is False
+
+
+def test_presupuestos_de_ia_validaciones(cliente, como, db):
+    db.sembrar("super_admins", {"user_id": "root"})
+    db.sembrar("businesses", {"id": "b1", "name": "Barberia"})
+    h = como("root")
+    url = "/admin/businesses/b1/ai-budget"
+    assert cliente.put(url, json={"monthly_ai_budget_usd": 5}, headers=como("normal")).status_code == 403
+    for malo in (0, -3, 1001, "mucho", None):
+        assert cliente.put(url, json={"monthly_ai_budget_usd": malo}, headers=h).status_code == 422
+    assert cliente.put(url, json={}, headers=h).status_code == 422
+    assert cliente.put("/admin/businesses/nada/ai-budget", json={"monthly_ai_budget_usd": 5}, headers=h).status_code == 404
+
+
+def test_gasto_de_todos_los_negocios_pagina(db):
+    from datetime import datetime
+
+    from services import ai_usage_tracking as uso
+
+    ahora = datetime.now().isoformat()
+    db.sembrar("ai_usage_log", *[{"business_id": f"b{i % 3}", "estimated_cost_usd": 0.01, "created_at": ahora} for i in range(1250)])
+    gasto = uso.obtener_gasto_mensual_de_todos()
+    assert round(sum(gasto.values()), 2) == 12.5 and set(gasto) == {"b0", "b1", "b2"}
+
+
 def test_super_admins_validaciones(cliente, como, db):
     db.sembrar("super_admins", {"user_id": "root"})
     h = como("root")

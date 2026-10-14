@@ -1,11 +1,20 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agent.graph import MENSAJE_NEGOCIO_NO_DISPONIBLE, enviar_mensaje, enviar_respuesta_humana, obtener_historial
+from core.settings import (
+    CHAT_LIMITE_IP_POR_MINUTO,
+    CHAT_LIMITE_SESION_POR_HORA,
+    CHAT_LIMITE_SESION_POR_MINUTO,
+    CHAT_MENSAJE_MAX_CARACTERES,
+)
+from services import rate_limit
+from services.ai_usage_tracking import presupuesto_agotado
 from services.auth import obtener_usuario_actual, verificar_acceso_negocio
 from services.db import get_business_by_id, get_employee_by_id
+from services.whatsapp import construir_mensaje_contacto_humano
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 business_chat_router = APIRouter(prefix="/business/{business_id}/chat-sessions", tags=["chat"])
@@ -55,6 +64,60 @@ def _historial_o_503(business_id: str, session_id: str) -> tuple[list, list | No
     except Exception as e:
         print(f"No se pudo leer el historial del chat {business_id}:{session_id}: {type(e).__name__}: {e}")
         raise HTTPException(status_code=503, detail="Historial temporalmente no disponible")
+
+
+MENSAJE_DEMASIADO_LARGO = (
+    "Tu mensaje es muy largo para que pueda leerlo bien 🙏. "
+    "¿Me lo cuentas de forma más corta?"
+)
+MENSAJE_ASISTENTE_NO_DISPONIBLE = "El asistente automático no está disponible por ahora."
+
+
+def _ip_del_cliente(request: Request) -> str:
+    """
+    IP de quien escribe. Detras de un proxy (nginx, Cloudflare) se toma la
+    ULTIMA entrada de X-Forwarded-For, que es la que agrego el proxy de
+    confianza: las anteriores las puede falsear el cliente para esquivar el
+    limite.
+    """
+    reenviado = request.headers.get("x-forwarded-for")
+    if reenviado:
+        ultima = reenviado.split(",")[-1].strip()
+        if ultima:
+            return ultima
+    return request.client.host if request.client else "desconocida"
+
+
+def _aplicar_salvaguardas(
+    request: Request, business: dict, session_id: str, data: "ChatMessageInput"
+) -> "ChatMessageResponse | None":
+    """
+    Controles de costo que corren ANTES de invocar al modelo (cada mensaje que
+    pasa cuesta tokens de OpenAI). Devuelve una respuesta lista si el mensaje
+    no debe procesarse, o None si puede seguir. Ver
+    docs/ESTRATEGIA_OPTIMIZACION_TOKENS.md (T0.2).
+    """
+    if len(data.mensaje) > CHAT_MENSAJE_MAX_CARACTERES:
+        return ChatMessageResponse(respuesta=MENSAJE_DEMASIADO_LARGO)
+
+    ip = _ip_del_cliente(request)
+    if (
+        not rate_limit.permitir(f"ip:{ip}", CHAT_LIMITE_IP_POR_MINUTO, 60)
+        or not rate_limit.permitir(f"sesion-min:{session_id}", CHAT_LIMITE_SESION_POR_MINUTO, 60)
+        or not rate_limit.permitir(f"sesion-hora:{session_id}", CHAT_LIMITE_SESION_POR_HORA, 3600)
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="Estás enviando mensajes muy rápido. Espera un momento e inténtalo de nuevo.",
+            headers={"Retry-After": "30"},
+        )
+
+    if presupuesto_agotado(business):
+        return ChatMessageResponse(
+            respuesta=MENSAJE_ASISTENTE_NO_DISPONIBLE + "\n\n" + construir_mensaje_contacto_humano(business)
+        )
+
+    return None
 
 
 def _validar_session_id(session_id: str) -> str:
@@ -137,7 +200,7 @@ def crear_sesion_chat(business_id: str):
 
 
 @router.post("/{business_id}/sessions/{session_id}/messages", response_model=ChatMessageResponse)
-def enviar_mensaje_chat(business_id: str, session_id: str, data: ChatMessageInput):
+def enviar_mensaje_chat(business_id: str, session_id: str, data: ChatMessageInput, request: Request):
     """
     Manda un mensaje del cliente al agente de este negocio y devuelve su
     respuesta. Aislado por negocio en dos capas: el business_id de la URL,
@@ -149,6 +212,10 @@ def enviar_mensaje_chat(business_id: str, session_id: str, data: ChatMessageInpu
 
     if not _negocio_habilitado(business):
         return ChatMessageResponse(respuesta=MENSAJE_NEGOCIO_NO_DISPONIBLE)
+
+    bloqueado = _aplicar_salvaguardas(request, business, session_id, data)
+    if bloqueado is not None:
+        return bloqueado
 
     respuesta, opciones = enviar_mensaje(
         business_id, session_id, data.mensaje, client_message_id=data.client_message_id
@@ -193,13 +260,19 @@ def crear_sesion_chat_empleado(business_id: str, employee_id: str):
 
 
 @router.post("/{business_id}/{employee_id}/sessions/{session_id}/messages", response_model=ChatMessageResponse)
-def enviar_mensaje_chat_empleado(business_id: str, employee_id: str, session_id: str, data: ChatMessageInput):
+def enviar_mensaje_chat_empleado(
+    business_id: str, employee_id: str, session_id: str, data: ChatMessageInput, request: Request
+):
     business = _obtener_negocio_o_404(business_id)
     _obtener_empleado_o_404(business_id, employee_id)
     session_id = _validar_session_id(session_id)
 
     if not _negocio_habilitado(business):
         return ChatMessageResponse(respuesta=MENSAJE_NEGOCIO_NO_DISPONIBLE)
+
+    bloqueado = _aplicar_salvaguardas(request, business, session_id, data)
+    if bloqueado is not None:
+        return bloqueado
 
     respuesta, opciones = enviar_mensaje(
         business_id, session_id, data.mensaje, employee_id=employee_id, client_message_id=data.client_message_id

@@ -2,7 +2,7 @@ import os
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from services.auth import requiere_super_admin
 from services.db import supabase
@@ -226,3 +226,69 @@ def revocar_super_admin(target_id: str, user_id: str = Depends(requiere_super_ad
 
     supabase.table("super_admins").delete().eq("user_id", target_id).execute()
     return {"revoked": True, "user_id": target_id}
+
+
+# ---------------------------------------------------------------------
+# Presupuesto mensual de IA por negocio
+# ---------------------------------------------------------------------
+
+PRESUPUESTO_IA_MAXIMO_USD = 1000
+
+
+class AiBudgetUpdate(BaseModel):
+    monthly_ai_budget_usd: float = Field(gt=0, le=PRESUPUESTO_IA_MAXIMO_USD)
+
+
+@router.get("/ai-budgets")
+def listar_presupuestos_ia(user_id: str = Depends(requiere_super_admin)):
+    """
+    Presupuesto mensual de IA y gasto del mes de cada negocio, para que el
+    super admin los revise y los ajuste (PUT /admin/businesses/{id}/ai-budget).
+    `presupuesto_efectivo_usd` es el que realmente aplica: si el negocio no
+    tiene uno guardado, rige el valor por defecto.
+    """
+    from core.settings import AI_PRESUPUESTO_CORTE_DURO
+    from services.ai_usage_tracking import PRESUPUESTO_POR_DEFECTO_USD, obtener_gasto_mensual_de_todos
+
+    negocios = supabase.table("businesses").select("id, name, monthly_ai_budget_usd").order("name").execute().data or []
+    gasto = obtener_gasto_mensual_de_todos()
+
+    filas = []
+    for n in negocios:
+        guardado = n.get("monthly_ai_budget_usd")
+        efectivo = guardado or PRESUPUESTO_POR_DEFECTO_USD
+        gastado = gasto.get(n["id"], 0.0)
+        filas.append(
+            {
+                "business_id": n["id"],
+                "name": n.get("name"),
+                "presupuesto_guardado_usd": guardado,
+                "presupuesto_efectivo_usd": efectivo,
+                "gasto_mes_usd": gastado,
+                "porcentaje_usado": round(gastado * 100 / efectivo, 1) if efectivo else None,
+            }
+        )
+
+    return {
+        "presupuestos": filas,
+        "presupuesto_por_defecto_usd": PRESUPUESTO_POR_DEFECTO_USD,
+        "corte_duro_activo": AI_PRESUPUESTO_CORTE_DURO,
+    }
+
+
+@router.put("/businesses/{business_id}/ai-budget")
+def actualizar_presupuesto_ia(business_id: str, data: AiBudgetUpdate, user_id: str = Depends(requiere_super_admin)):
+    """Fija el presupuesto mensual de IA (USD) de un negocio. Aplica de inmediato al corte duro."""
+    from services.ai_usage_tracking import invalidar_cache_presupuesto
+
+    response = (
+        supabase.table("businesses")
+        .update({"monthly_ai_budget_usd": round(data.monthly_ai_budget_usd, 2)})
+        .eq("id", business_id)
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Negocio no encontrado")
+
+    invalidar_cache_presupuesto(business_id)
+    return {"business_id": business_id, "monthly_ai_budget_usd": response.data[0]["monthly_ai_budget_usd"]}

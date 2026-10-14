@@ -101,7 +101,18 @@ def test_invocar_modelo_reintenta_y_registra_uso(monkeypatch, negocio):
     respuesta = AIMessage(content="hola", usage_metadata={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15})
     modelo = ModeloGuionado(RuntimeError("timeout"), respuesta)
     assert g._invocar_modelo(modelo, [], BIZ) is respuesta
-    registrar.assert_called_once_with(BIZ, 10, 5, 15)
+    registrar.assert_called_once_with(BIZ, 10, 5, 15, cached_tokens=0, tipo="turno", session_id=None)
+
+    # Con tokens cacheados, el tipo de llamada y la conversacion se propagan al registro.
+    registrar.reset_mock()
+    cacheada = AIMessage(
+        content="hola",
+        usage_metadata={"input_tokens": 100, "output_tokens": 5, "total_tokens": 105, "input_token_details": {"cache_read": 80}},
+    )
+    g._invocar_modelo(ModeloGuionado(cacheada), [], BIZ, tipo="re_llamada_anti_alucinacion", session_id="s-1")
+    registrar.assert_called_once_with(
+        BIZ, 100, 5, 105, cached_tokens=80, tipo="re_llamada_anti_alucinacion", session_id="s-1"
+    )
 
     assert g._invocar_modelo(ModeloGuionado(*[RuntimeError("x")] * g.LLM_MAX_INTENTOS), [], BIZ) is None
 
