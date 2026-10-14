@@ -1,3 +1,4 @@
+import json
 import re
 import time
 import uuid
@@ -743,12 +744,44 @@ def _mensaje_error_tecnico(business_id: str) -> str:
         return MENSAJE_ERROR_TECNICO
 
 
+# Linea de franja que el modelo reescribio a su manera ("Mañana: ...", "🌅 *Mañana:* ...", "**Tarde**: ...").
+_LINEA_FRANJA = re.compile(r"^\s*[^\w\s*]{0,3}\s*\*{0,2}(?:Ma[ñn]ana|Tarde)\*{0,2}\s*:\s*\*{0,2}.*$", re.IGNORECASE)
+
+
+def _con_franjas_canonicas(texto: str, mensajes_nuevos: list) -> str:
+    """
+    Si en este turno se consultaron horas, las lineas Mañana/Tarde de la respuesta
+    se reemplazan por las que armo la herramienta (horas_por_franja), con su emoji y
+    negrita. El prompt le pide al modelo copiarlas tal cual, pero a veces las
+    reescribe (sin los asteriscos, o con otras horas); como el formato y las horas
+    son datos, no redaccion, se imponen aqui en vez de confiar en el modelo.
+    """
+    canonico = None
+    for m in reversed(mensajes_nuevos):
+        if isinstance(m, ToolMessage) and m.name == "consultar_horas_disponibles":
+            try:
+                canonico = json.loads(str(m.content)).get("horas_por_franja")
+            except (ValueError, AttributeError):
+                canonico = None
+            break
+    if not canonico:
+        return texto
+    lineas = texto.split("\n")
+    indices = [i for i, linea in enumerate(lineas) if _LINEA_FRANJA.match(linea)]
+    if not indices:
+        return texto
+    resto = [linea for i, linea in enumerate(lineas) if i not in set(indices)]
+    posicion = indices[0]
+    return "\n".join(resto[:posicion] + canonico.split("\n") + resto[posicion:])
+
+
 def _respuesta_de_turno(mensajes: list, desde: int, ultimas_opciones, service_id, employee_id) -> tuple[str, list[dict] | None]:
     """(texto, opciones) de la respuesta del asistente en los mensajes posteriores a `desde`."""
     mensajes_nuevos = mensajes[desde:]
     respuesta_texto = next(
         (m.content for m in reversed(mensajes_nuevos) if isinstance(m, AIMessage) and m.content), ""
     )
+    respuesta_texto = _con_franjas_canonicas(str(respuesta_texto), mensajes_nuevos)
     textos_cliente = [str(m.content) for m in mensajes if isinstance(m, HumanMessage)]
     opciones = _extraer_opciones(
         mensajes_nuevos, ultimas_opciones, service_id, employee_id, respuesta_texto, textos_cliente
