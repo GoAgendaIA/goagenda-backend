@@ -11,12 +11,16 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from agent.prompts import build_system_prompt
+from agent.prompts_v2 import build_system_prompt_v2
+from agent.tools_schemas import esquemas_para_modelo
 from agent.state import AgentState
 from agent.tools import _normalizar, TOOLS
 from core.settings import (
     CHAT_MODEL_NAME,
     DATABASE_URL,
     CHAT_HISTORIAL_MAX_TURNOS,
+    CHAT_PROMPT_VERSION,
+    CHAT_TOOLS_VERSION,
     DB_POOL_MAX_SIZE,
     LLM_MAX_TOKENS_SALIDA,
     DB_POOL_MIN_SIZE,
@@ -102,11 +106,12 @@ _llm = ChatOpenAI(
     max_retries=0,
     max_tokens=LLM_MAX_TOKENS_SALIDA,
 )
-_model = _llm.bind_tools(TOOLS)
+_TOOLS_PARA_MODELO = esquemas_para_modelo(TOOLS, CHAT_TOOLS_VERSION)
+_model = _llm.bind_tools(_TOOLS_PARA_MODELO)
 # Mismo modelo, pero obligado a llamar consultar_servicios_disponibles: se
 # usa solo cuando _precios_no_respaldados detecta que la respuesta normal
 # menciono precios que no existen (ver _agent_node).
-_model_forzar_servicios = _llm.bind_tools(TOOLS, tool_choice="consultar_servicios_disponibles")
+_model_forzar_servicios = _llm.bind_tools(_TOOLS_PARA_MODELO, tool_choice="consultar_servicios_disponibles")
 
 _PATRON_PRECIO = re.compile(r"\$\s?(\d{1,3}(?:[.,]\d{3})+|\d+)")
 _PATRON_NUMERO = re.compile(r"\d+(?:[.,]\d+)*")
@@ -271,7 +276,8 @@ def _agent_node(state: AgentState) -> dict:
         for e in get_employees(state["business_id"])
     ]
     catalogo = get_employee_services(state["employee_id"]) if state.get("employee_id") else get_services(state["business_id"])
-    system = build_system_prompt(
+    construir_prompt = build_system_prompt_v2 if CHAT_PROMPT_VERSION == "v2" else build_system_prompt
+    system = construir_prompt(
         business,
         horario_texto,
         fecha_actual,
