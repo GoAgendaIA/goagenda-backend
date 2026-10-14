@@ -1,3 +1,4 @@
+import json
 import re
 import time
 import uuid
@@ -573,6 +574,14 @@ def _agent_node(state: AgentState) -> dict:
             if forzada is not None and getattr(forzada, "tool_calls", None):
                 response = forzada
 
+    if not getattr(response, "tool_calls", None) and isinstance(response.content, str):
+        # Se corrige ANTES de guardar: asi el historial que el widget recarga trae
+        # el mismo texto (con negritas y franjas) que la respuesta inmediata.
+        desde = max((i for i, m in enumerate(state["messages"]) if isinstance(m, HumanMessage)), default=-1) + 1
+        corregido = _con_franjas_canonicas(response.content, state["messages"][desde:])
+        if corregido != response.content:
+            response = response.model_copy(update={"content": corregido})
+
     return {"messages": [response]}
 
 
@@ -743,12 +752,54 @@ def _mensaje_error_tecnico(business_id: str) -> str:
         return MENSAJE_ERROR_TECNICO
 
 
+# Titulo de franja que el modelo reescribio a su manera ("Mañana: ...", "🌅 *En la mañana:* ...", "**Tarde**: ...").
+_LINEA_FRANJA = re.compile(r"^\s*[^\w\s*]{0,3}\s*\*{0,2}(?:en la )?(?:Ma[ñn]ana|Tarde)\*{0,2}\s*:\s*\*{0,2}.*$", re.IGNORECASE)
+# Una hora suelta en su propia linea ("• 9:00 am", "- 2:30 pm", "🕐 9:00 am"): el modelo las lista hacia abajo.
+_LINEA_HORA = re.compile(r"^\s*[^\w\s]{0,3}\s*\d{1,2}:\d{2}\s*[ap]\.?\s?m\.?\s*$", re.IGNORECASE)
+
+
+def _con_franjas_canonicas(texto: str, mensajes_nuevos: list) -> str:
+    """
+    Si en este turno se consultaron horas, el bloque de franjas de la respuesta
+    (los titulos "En la mañana"/"En la tarde" y las horas que les siguen) se
+    reemplaza por el que armo la herramienta (horas_por_franja), con su emoji,
+    negrita y una hora por linea. El prompt le pide al modelo copiarlo tal cual,
+    pero a veces lo reescribe (sin los asteriscos, en una sola linea o con otras
+    horas); como el formato y las horas son datos, no redaccion, se imponen aqui
+    en vez de confiar en el modelo.
+    """
+    canonico = None
+    for m in reversed(mensajes_nuevos):
+        if isinstance(m, ToolMessage) and m.name == "consultar_horas_disponibles":
+            try:
+                canonico = json.loads(str(m.content)).get("horas_por_franja")
+            except (ValueError, AttributeError):
+                canonico = None
+            break
+    if not canonico:
+        return texto
+    lineas = texto.split("\n")
+    quitar: set[int] = set()
+    for i, linea in enumerate(lineas):
+        if _LINEA_FRANJA.match(linea):
+            quitar.add(i)
+        elif (i - 1) in quitar and _LINEA_HORA.match(linea):
+            quitar.add(i)  # las horas que el modelo puso debajo de un titulo de franja
+    if not quitar:
+        return texto
+    posicion = min(quitar)
+    resto = [linea for i, linea in enumerate(lineas) if i not in quitar]
+    unido = "\n".join(resto[:posicion] + canonico.split("\n") + resto[posicion:])
+    return re.sub(r"\n{3,}", "\n\n", unido)  # las lineas en blanco que dejaba el bloque original
+
+
 def _respuesta_de_turno(mensajes: list, desde: int, ultimas_opciones, service_id, employee_id) -> tuple[str, list[dict] | None]:
     """(texto, opciones) de la respuesta del asistente en los mensajes posteriores a `desde`."""
     mensajes_nuevos = mensajes[desde:]
     respuesta_texto = next(
         (m.content for m in reversed(mensajes_nuevos) if isinstance(m, AIMessage) and m.content), ""
     )
+    respuesta_texto = _con_franjas_canonicas(str(respuesta_texto), mensajes_nuevos)
     textos_cliente = [str(m.content) for m in mensajes if isinstance(m, HumanMessage)]
     opciones = _extraer_opciones(
         mensajes_nuevos, ultimas_opciones, service_id, employee_id, respuesta_texto, textos_cliente
