@@ -61,3 +61,17 @@ AI_PRESUPUESTO_CORTE_DURO = (os.getenv("AI_PRESUPUESTO_CORTE_DURO") or "").strip
 # completo sigue guardado: esto solo acota lo que viaja en cada llamada, cuyo
 # costo crecia con la longitud de la conversacion (T1.2).
 CHAT_HISTORIAL_MAX_TURNOS = _entero_env("CHAT_HISTORIAL_MAX_TURNOS", 12)
+
+# Versiones del contexto que se envia al modelo (T2.2 y T2.3). "v1" es el
+# comportamiento actual; "v2" es la version compacta. Se mantienen detras de una
+# bandera, apagadas por defecto, hasta que la evaluacion en vivo (evaluacion/)
+# confirme que no degradan la calidad.
+CHAT_PROMPT_VERSION = (os.getenv("CHAT_PROMPT_VERSION") or "v1").strip().lower()
+CHAT_TOOLS_VERSION = (os.getenv("CHAT_TOOLS_VERSION") or "v1").strip().lower()
+
+# --- Fase 3: menos llamadas al modelo y enrutamiento (agent/flujos.py). Todo apagado por defecto. ---
+# Lista separada por comas (saludo, confirmacion, servicios) o "all".
+CHAT_FLUJOS_DETERMINISTAS = (os.getenv("CHAT_FLUJOS_DETERMINISTAS") or "").strip().lower()
+# "relay": las llamadas que solo relatan un resultado usan CHAT_MODEL_NAME_SIMPLE.
+CHAT_ENRUTAMIENTO = (os.getenv("CHAT_ENRUTAMIENTO") or "").strip().lower()
+CHAT_MODEL_NAME_SIMPLE = (os.getenv("CHAT_MODEL_NAME_SIMPLE") or "").strip()

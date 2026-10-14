@@ -119,7 +119,12 @@ Detiene la hemorragia y fija la línea base.
 | T1.2 Historial | Código listo y probado (ventana de 12 turnos y resultados de consulta superados reemplazados por un marcador; solo afecta lo que viaja al modelo) | Verificar en producción; resumen con modelo barato queda para una fase posterior |
 | T1.3 Salidas de herramientas compactas | Código listo y probado: lista de servicios **-79 %** (~494 → ~105 tokens para 6 servicios) | Medir el efecto total en la línea base |
 | T1.4 Secciones condicionales | Código listo y probado: prompt de un negocio simple **-12 %** (~5.7 k → ~5.0 k tokens) | La reducción grande del prompt viene en T2.2 (con evaluación) |
-| Fases 2 a 4 | Sin empezar | — |
+| T2.1 Evaluación | Código listo y probado: 34 escenarios, ejecutor con tope de gasto y reporte comparable (`evaluacion/`) | **Correrla en vivo con una clave propia** (`evaluacion/README.md`) para fijar la línea base |
+| T2.2 Prompt compacto | Código listo y probado, detrás de `CHAT_PROMPT_VERSION=v2` (apagado). Simple: ~5.0 k → ~2.1 k tokens (**−57 %**) | Evaluación en vivo v1 vs v2 antes de activarlo |
+| T2.3 Herramientas compactas | Código listo y probado, detrás de `CHAT_TOOLS_VERSION=v2` (apagado). ~2.85 k → ~1.5 k tokens (**−48 %**) | Evaluación en vivo antes de activarlo |
+| T3.1 Menos llamadas | Código listo y probado, detrás de `CHAT_FLUJOS_DETERMINISTAS` (apagado): saludo sin modelo, resumen de confirmación sin llamada de relevo y consulta de servicios en la primera llamada | Evaluación en vivo y medir llamadas por conversación (meta −30 %) |
+| T3.2 Enrutamiento de modelo | Código listo y probado, detrás de `CHAT_ENRUTAMIENTO=relay` + `CHAT_MODEL_NAME_SIMPLE` (apagado) | Evaluar modelos baratos con T2.1 antes de elegir uno |
+| Fase 4 | Sin empezar | — |
 
 ### Notas de la implementación
 
@@ -141,3 +146,38 @@ Detiene la hemorragia y fija la línea base.
 - **T1.4:** las reglas de domicilios (2 bloques) solo se incluyen si el negocio tiene `home_visits_enabled`; las de pagos, solo si algún servicio del catálogo `requires_payment`. La regla de cancelación con pago (corta) se mantiene siempre.
 - **T1.2:** se conservan los últimos `CHAT_HISTORIAL_MAX_TURNOS` (12) turnos del cliente. Se corta siempre en un mensaje humano para no dejar `ToolMessage` huérfanos. De cada consulta (horas, empleados, servicios, zonas) se conserva el resultado **más reciente** aunque sea de un turno anterior (el cliente elige la hora en el turno siguiente y el modelo aún necesita `equivalencias_am_pm_a_24h`).
 - **Limitación conocida (T1.2):** pasados 12 turnos, datos dichos por el cliente al principio (p. ej. su nombre) dejan de viajar; el aviso insertado le indica al modelo que los pida de nuevo. Un bloque de «estado de la reserva» estructurado queda para después.
+
+### Notas de T2.1, T2.2 y T2.3
+
+- **T2.1:** `evaluacion/` contiene 34 conversaciones de referencia (agendar, gestionar, identificación, humano, seguridad, domicilios, abonos, equipo), un ejecutor que mide llamadas/tokens/costo con tope de gasto y un comparador de reportes. Verifica además dos invariantes en todos los escenarios: ninguna hora en 24 h al cliente y ningún precio inventado. Con `EVAL_LIVE=1` solo se puede resolver `api.openai.com`; Supabase, WhatsApp, Wompi y push son dobles.
+- **T2.2:** `agent/prompts_v2.py` conserva cada regla distinta del producto (hay una prueba con ~40 referencias obligatorias: nombres de tools, campos y frases) y elimina la redundancia (reglas repetidas 2-3 veces). Mismo orden pensado para la caché. **Apagado por defecto**: sin evaluación en vivo no se puede afirmar que el modelo se comporte igual.
+- **T2.3:** `agent/tools_schemas.py` deriva los esquemas de las tools reales (no se pueden desincronizar) y solo cambia descripciones y simplifica los opcionales.
+- **Decisión de diseño — no se hace gating dinámico de herramientas por estado.** Las tools van al inicio del prefijo que OpenAI cachea: cambiar el conjunto entre llamadas invalida la caché (lo que T1.1 consiguió) y el ahorro de quitar unas pocas tools es menor que lo que cuesta perderla. Las propias tools ya devuelven un mensaje amable si falta el teléfono o la cita.
+- **Resultado combinado (aprox. caracteres/4):** fijo por llamada de un negocio simple ~7.9 k → ~3.6 k tokens (**−54 %**).
+
+### Cómo activar v2 de forma segura
+
+1. Correr la evaluación con la configuración actual (`EVAL_ETIQUETA=base`).
+2. Correrla con `CHAT_PROMPT_VERSION=v2` y/o `CHAT_TOOLS_VERSION=v2` y compararlas con `python -m evaluacion.comparar`.
+3. Si no hay regresiones, activarlo primero en el VPS de pruebas y luego en producción, vigilando `ia.tokens` en el Centro de métricas.
+
+### Notas de T3.1 y T3.2
+
+**T3.1: qué atajos hay y cuándo se activan**
+
+| Atajo (`CHAT_FLUJOS_DETERMINISTAS`) | Qué hace | Cuándo NO aplica | Llamadas que evita |
+|---|---|---|---|
+| `saludo` | Un saludo puro ("hola", "buenas tardes") al inicio se responde en código con la lista real de servicios y los botones; deja en el historial el mismo par llamada/resultado de `consultar_servicios_disponibles` | Varios empleados sin chat fijo, ya hubo conversación, el mensaje trae algo más, cliente transferido | 2 |
+| `confirmacion` | El resumen exitoso de `pedir_confirmacion_cita` se entrega tal cual | Resultados de error (los explica el modelo), varias herramientas a la vez | 1 por reserva |
+| `servicios` | Ante "¿qué servicios tienen / cuánto cuesta?" la primera llamada ya es la consulta (antes: texto descartado por la red anti-alucinación y luego otra llamada) | El mensaje pide agendar o gestionar, o hay varios empleados sin elegir | 1 |
+
+- **Hallazgo durante la implementación:** `ToolNode` de LangGraph le pone el nombre de la herramienta también a sus mensajes de error, así que el resumen exitoso se distingue por su contenido (termina en «¿Confirmo tu cita?», el mismo criterio de coherencia de botones) y no por el nombre.
+- **No se hizo** una plantilla para el mensaje posterior a `crear_cita`: involucra links de pago exactos, domicilios y el tono del negocio; es de donde menos se gana y más se arriesga.
+
+**T3.2: enrutamiento**
+
+- Con `CHAT_ENRUTAMIENTO=relay`, la llamada que solo tiene que **relatar** el resultado de una consulta (servicios, horas, empleados, zonas, teléfono registrado, selecciones y consulta de citas) usa `CHAT_MODEL_NAME_SIMPLE`.
+- **Siempre con el modelo principal:** `crear_cita` (link de pago exacto), cancelar, reprogramar y las herramientas de escalamiento.
+- El costo se registra con el modelo real de cada llamada (tipo `relevo` en `ai_usage_log`).
+- **Compromiso conocido:** la caché de prompt es por modelo; el modelo simple mantiene su propia caché (se calienta con sus propias llamadas).
+- La clasificación es por posición en el flujo (qué acaba de ocurrir), no por un clasificador con LLM: es determinista y no cuesta tokens.

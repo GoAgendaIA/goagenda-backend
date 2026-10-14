@@ -56,6 +56,14 @@ for _clave in list(os.environ):
         del os.environ[_clave]
 os.environ.update(_ENV_DE_PRUEBA)
 
+# Evaluacion en vivo (evaluacion/README.md): UNICO caso en que el modelo real es
+# alcanzable. Exige EVAL_LIVE=1 y una clave propia de la evaluacion
+# (EVAL_OPENAI_API_KEY), nunca la de produccion. Todo lo demas sigue bloqueado.
+EVAL_EN_VIVO = os.environ.get("EVAL_LIVE") == "1"
+if EVAL_EN_VIVO:
+    os.environ["OPENAI_API_KEY"] = os.environ["EVAL_OPENAI_API_KEY"]
+    os.environ["CHAT_MODEL_NAME"] = os.environ.get("EVAL_MODELO") or "gpt-4.1-mini"
+
 # --- 2. Red bloqueada -------------------------------------------------------
 class RedBloqueadaEnPruebas(RuntimeError):
     pass
@@ -65,8 +73,19 @@ def _sin_red(self, direccion, *args, **kwargs):
     raise RedBloqueadaEnPruebas(f"Las pruebas no pueden abrir conexiones de red (intento a {direccion}). Falta un mock.")
 
 
-socket.socket.connect = _sin_red
-socket.socket.connect_ex = _sin_red
+if EVAL_EN_VIVO:
+    # Se bloquea la RESOLUCION DE NOMBRES: solo api.openai.com puede resolverse.
+    _getaddrinfo_original = socket.getaddrinfo
+
+    def _solo_openai(host, *args, **kwargs):
+        if host in ("api.openai.com", "localhost", "127.0.0.1"):
+            return _getaddrinfo_original(host, *args, **kwargs)
+        raise RedBloqueadaEnPruebas(f"La evaluacion en vivo solo puede alcanzar api.openai.com (intento a {host}).")
+
+    socket.getaddrinfo = _solo_openai
+else:
+    socket.socket.connect = _sin_red
+    socket.socket.connect_ex = _sin_red
 
 # --- 3. Supabase en memoria ---------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

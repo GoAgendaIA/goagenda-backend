@@ -24,3 +24,6 @@ package-lock.json
 .coverage
 .pytest_cache/
 htmlcov/
+
+# Reportes de la evaluacion en vivo (evaluacion/README.md)
+evaluacion/reportes/

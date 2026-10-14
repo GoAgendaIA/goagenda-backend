@@ -1,22 +1,37 @@
 import re
 import time
+import uuid
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.errors import GraphRecursionError
-from langgraph.graph import END, StateGraph
+from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from agent.prompts import build_system_prompt
+from agent.flujos import (
+    TOOLS_DE_RELEVO_SEGURAS,
+    emoji_del_negocio,
+    es_saludo_puro,
+    flujos_activos,
+    pregunta_por_servicios,
+)
+from agent.prompts_v2 import build_system_prompt_v2
+from agent.tools_schemas import esquemas_para_modelo
 from agent.state import AgentState
-from agent.tools import _normalizar, TOOLS
+from agent.tools import TOOLS, _formato_precio_cop, _normalizar, consultar_servicios_disponibles
 from core.settings import (
     CHAT_MODEL_NAME,
     DATABASE_URL,
+    CHAT_ENRUTAMIENTO,
+    CHAT_FLUJOS_DETERMINISTAS,
     CHAT_HISTORIAL_MAX_TURNOS,
+    CHAT_MODEL_NAME_SIMPLE,
+    CHAT_PROMPT_VERSION,
+    CHAT_TOOLS_VERSION,
     DB_POOL_MAX_SIZE,
     LLM_MAX_TOKENS_SALIDA,
     DB_POOL_MIN_SIZE,
@@ -102,11 +117,25 @@ _llm = ChatOpenAI(
     max_retries=0,
     max_tokens=LLM_MAX_TOKENS_SALIDA,
 )
-_model = _llm.bind_tools(TOOLS)
+_TOOLS_PARA_MODELO = esquemas_para_modelo(TOOLS, CHAT_TOOLS_VERSION)
+_model = _llm.bind_tools(_TOOLS_PARA_MODELO)
 # Mismo modelo, pero obligado a llamar consultar_servicios_disponibles: se
 # usa solo cuando _precios_no_respaldados detecta que la respuesta normal
 # menciono precios que no existen (ver _agent_node).
-_model_forzar_servicios = _llm.bind_tools(TOOLS, tool_choice="consultar_servicios_disponibles")
+_model_forzar_servicios = _llm.bind_tools(_TOOLS_PARA_MODELO, tool_choice="consultar_servicios_disponibles")
+
+# Enrutamiento de modelo (T3.2): modelo barato para las llamadas que solo relatan
+# un resultado. Se construye solo si hay un nombre configurado; con los mismos
+# parametros y las mismas herramientas que el principal.
+_model_simple = None
+if CHAT_MODEL_NAME_SIMPLE:
+    _model_simple = ChatOpenAI(
+        model=CHAT_MODEL_NAME_SIMPLE,
+        api_key=OPENAI_API_KEY,
+        temperature=LLM_TEMPERATURE,
+        max_retries=0,
+        max_tokens=LLM_MAX_TOKENS_SALIDA,
+    ).bind_tools(_TOOLS_PARA_MODELO)
 
 _PATRON_PRECIO = re.compile(r"\$\s?(\d{1,3}(?:[.,]\d{3})+|\d+)")
 _PATRON_NUMERO = re.compile(r"\d+(?:[.,]\d+)*")
@@ -250,6 +279,149 @@ def _preparar_historial_para_modelo(mensajes: list) -> list:
     )
 
 
+def _resultados_recientes(mensajes: list) -> list:
+    """Los ToolMessage que acaban de ejecutarse (los ultimos, hasta el primer mensaje que no es de herramienta)."""
+    recientes = []
+    for m in reversed(mensajes):
+        if not isinstance(m, ToolMessage):
+            break
+        recientes.append(m)
+    return list(reversed(recientes))
+
+
+def _elegir_modelo(state: AgentState, empleados: list[dict]):
+    """
+    (modelo, nombre, tipo_de_llamada) para la llamada que sigue.
+    - T3.1 "servicios": si el cliente solo pregunta que servicios hay o cuanto
+      cuestan, la primera llamada ya es la consulta (antes se generaba un texto
+      que la red anti-alucinacion descartaba y se llamaba de nuevo). Solo si no
+      hay que elegir empleado antes.
+    - T3.2 "relay": si lo ultimo fue un resultado de consulta que solo hay que
+      relatar, se usa el modelo barato. Lo que maneja dinero o decide (crear,
+      cancelar, reprogramar, escalar) queda con el principal.
+    """
+    mensajes = state["messages"]
+    flujos = flujos_activos(CHAT_FLUJOS_DETERMINISTAS)
+
+    if (
+        "servicios" in flujos
+        and mensajes
+        and isinstance(mensajes[-1], HumanMessage)
+        and pregunta_por_servicios(mensajes[-1].content)
+        and (len(empleados) <= 1 or state.get("employee_id"))
+    ):
+        return _model_forzar_servicios, CHAT_MODEL_NAME, "turno_servicios_directo"
+
+    if CHAT_ENRUTAMIENTO == "relay" and _model_simple is not None:
+        recientes = _resultados_recientes(mensajes)
+        if recientes and all(m.name in TOOLS_DE_RELEVO_SEGURAS for m in recientes):
+            return _model_simple, CHAT_MODEL_NAME_SIMPLE, "relevo"
+
+    return _model, CHAT_MODEL_NAME, "turno"
+
+
+def _datos_para_saludo(state: AgentState):
+    """(negocio, empleado, servicios) si el saludo se puede responder en codigo; si no, None."""
+    business = get_business_by_id(state["business_id"])
+    if not business:
+        return None
+    empleados = get_employees(state["business_id"])
+    employee_id = state.get("employee_id")
+    if state.get("employee_fijo") and employee_id:
+        empleado = next((e for e in empleados if e["id"] == employee_id), None)
+    elif len(empleados) == 1:
+        empleado = empleados[0]
+    else:
+        return None  # con varios empleados primero hay que preguntar con quien: lo decide el modelo
+    if not empleado:
+        return None
+    servicios = get_employee_services(empleado["id"])
+    if not servicios:
+        return None
+    return business, empleado, servicios
+
+
+def _ruta_inicial(state: AgentState) -> str:
+    """Entrada del grafo: un saludo puro al inicio de la conversacion se responde sin modelo (T3.1)."""
+    if "saludo" not in flujos_activos(CHAT_FLUJOS_DETERMINISTAS):
+        return "agent"
+    if state.get("transferido") or state.get("escalado"):
+        return "agent"
+    mensajes = state["messages"]
+    if not mensajes or not isinstance(mensajes[-1], HumanMessage):
+        return "agent"
+    if any(isinstance(m, AIMessage) for m in mensajes[:-1]):
+        return "agent"  # ya hubo conversacion: no se vuelve a presentar la lista
+    if not es_saludo_puro(mensajes[-1].content):
+        return "agent"
+    return "saludo" if _datos_para_saludo(state) is not None else "agent"
+
+
+def _nodo_saludo(state: AgentState) -> dict:
+    """
+    Responde el saludo con la lista REAL de servicios, igual que lo pide el
+    prompt (nombre del negocio + servicios con precio y duracion + una
+    pregunta) pero sin llamar al modelo. Deja en el historial el mismo par
+    llamada/resultado de consultar_servicios_disponibles que habria dejado el
+    modelo, para que lo que sigue (botones, red de precios, turnos futuros) no
+    note la diferencia.
+    """
+    business, empleado, servicios = _datos_para_saludo(state)
+    llamada_id = f"call_{uuid.uuid4().hex[:24]}"
+    actualizacion = consultar_servicios_disponibles.func(state["business_id"], empleado["id"], llamada_id).update
+
+    nombre = business.get("name") or "el negocio"
+    emoji = emoji_del_negocio(business.get("business_type"))
+    if state.get("employee_fijo") and state.get("employee_id"):
+        lineas = [f"¡Hola! 👋 Bienvenido a {nombre}, este enlace de chat pertenece a {empleado.get('name') or 'nuestro equipo'}."]
+    else:
+        lineas = [f"¡Hola! 👋 Bienvenido a {nombre}."]
+    lineas.append("Estos son nuestros servicios:")
+    for s in servicios:
+        lineas.append(f"{emoji} *{s['name']}* - {s['duration_minutes']} min - {_formato_precio_cop(s['price'])}")
+    lineas.append("¿Cuál te interesa o quieres agendar una cita?")
+
+    llamada = AIMessage(
+        content="", tool_calls=[{"name": "consultar_servicios_disponibles", "args": {}, "id": llamada_id, "type": "tool_call"}]
+    )
+    return {
+        "messages": [llamada, *actualizacion["messages"], AIMessage(content="\n".join(lineas))],
+        "ultimas_opciones": actualizacion.get("ultimas_opciones"),
+        "employee_id": empleado["id"],
+    }
+
+
+def _es_resumen_de_confirmacion(mensaje) -> bool:
+    """
+    True solo para el resumen EXITOSO de pedir_confirmacion_cita. No basta el
+    nombre de la tool: ToolNode tambien le pone ese nombre a sus mensajes de
+    error ("falta el WhatsApp", "esa hora no esta disponible"...), que debe
+    explicarle el modelo. El resumen siempre termina en la pregunta de
+    confirmacion (el mismo criterio de _opciones_coherentes).
+    """
+    return (
+        getattr(mensaje, "name", None) == "pedir_confirmacion_cita"
+        and _normalizar(str(mensaje.content)).rstrip().endswith("confirmo tu cita?")
+    )
+
+
+def _despues_de_tools(state: AgentState) -> str:
+    """
+    Tras ejecutar herramientas: el resumen de pedir_confirmacion_cita ya es el
+    texto final (el prompt le exige al modelo entregarlo tal cual), asi que se
+    responde sin una llamada mas (T3.1). Solo el caso exitoso.
+    """
+    if "confirmacion" in flujos_activos(CHAT_FLUJOS_DETERMINISTAS):
+        recientes = _resultados_recientes(state["messages"])
+        if len(recientes) == 1 and _es_resumen_de_confirmacion(recientes[0]):
+            return "directo"
+    return "agent"
+
+
+def _nodo_respuesta_directa(state: AgentState) -> dict:
+    return {"messages": [AIMessage(content=str(_resultados_recientes(state["messages"])[0].content))]}
+
+
 def _agent_node(state: AgentState) -> dict:
     if state.get("transferido"):
         return {"messages": [AIMessage(content=MENSAJE_TRANSFERIDO)]}
@@ -271,7 +443,8 @@ def _agent_node(state: AgentState) -> dict:
         for e in get_employees(state["business_id"])
     ]
     catalogo = get_employee_services(state["employee_id"]) if state.get("employee_id") else get_services(state["business_id"])
-    system = build_system_prompt(
+    construir_prompt = build_system_prompt_v2 if CHAT_PROMPT_VERSION == "v2" else build_system_prompt
+    system = construir_prompt(
         business,
         horario_texto,
         fecha_actual,
@@ -286,7 +459,11 @@ def _agent_node(state: AgentState) -> dict:
 
     entrada = [SystemMessage(content=system)] + _preparar_historial_para_modelo(state["messages"])
 
-    response = _invocar_modelo(_model, entrada, state["business_id"], session_id=state.get("session_id"))
+    modelo_turno, nombre_modelo, tipo_llamada = _elegir_modelo(state, empleados)
+    response = _invocar_modelo(
+        modelo_turno, entrada, state["business_id"], tipo=tipo_llamada, session_id=state.get("session_id"),
+        nombre_modelo=nombre_modelo,
+    )
     if response is None:
         mensaje = MENSAJE_ERROR_TECNICO + "\n\n" + construir_mensaje_contacto_humano(business)
         return {"messages": [AIMessage(content=mensaje)]}
@@ -344,7 +521,10 @@ def _consulto_servicios_en_este_turno(mensajes: list) -> bool:
     return False
 
 
-def _invocar_modelo(modelo, entrada: list, business_id: str, tipo: str = "turno", session_id: str | None = None):
+def _invocar_modelo(
+    modelo, entrada: list, business_id: str, tipo: str = "turno", session_id: str | None = None,
+    nombre_modelo: str | None = None,
+):
     """
     Invoca el modelo y registra el consumo de tokens. Reintenta hasta
     LLM_MAX_INTENTOS veces antes de rendirse (devuelve None): la falla
@@ -375,6 +555,7 @@ def _invocar_modelo(modelo, entrada: list, business_id: str, tipo: str = "turno"
                 cached_tokens=detalle.get("cache_read", 0) or 0,
                 tipo=tipo,
                 session_id=session_id,
+                modelo=nombre_modelo,
             )
     return response
 
@@ -383,9 +564,13 @@ def _build_graph():
     builder = StateGraph(AgentState)
     builder.add_node("agent", _agent_node)
     builder.add_node("tools", ToolNode(TOOLS))
-    builder.set_entry_point("agent")
+    builder.add_node("saludo", _nodo_saludo)
+    builder.add_node("respuesta_directa", _nodo_respuesta_directa)
+    builder.add_conditional_edges(START, _ruta_inicial, {"saludo": "saludo", "agent": "agent"})
+    builder.add_edge("saludo", END)
     builder.add_conditional_edges("agent", tools_condition, {"tools": "tools", END: END})
-    builder.add_edge("tools", "agent")
+    builder.add_conditional_edges("tools", _despues_de_tools, {"agent": "agent", "directo": "respuesta_directa"})
+    builder.add_edge("respuesta_directa", END)
     return builder.compile(checkpointer=_checkpointer)
 
 
