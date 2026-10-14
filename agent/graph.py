@@ -744,13 +744,13 @@ def _mensaje_error_tecnico(business_id: str) -> str:
         return MENSAJE_ERROR_TECNICO
 
 
-# Linea de franja que el modelo reescribio a su manera ("Mañana: ...", "🌅 *Mañana:* ...", "**Tarde**: ...").
-_LINEA_FRANJA = re.compile(r"^\s*[^\w\s*]{0,3}\s*\*{0,2}(?:Ma[ñn]ana|Tarde)\*{0,2}\s*:\s*\*{0,2}.*$", re.IGNORECASE)
+# Linea de franja que el modelo reescribio a su manera ("Mañana: ...", "🌅 *En la mañana:* ...", "**Tarde**: ...").
+_LINEA_FRANJA = re.compile(r"^\s*[^\w\s*]{0,3}\s*\*{0,2}(?:en la )?(?:Ma[ñn]ana|Tarde)\*{0,2}\s*:\s*\*{0,2}.*$", re.IGNORECASE)
 
 
 def _con_franjas_canonicas(texto: str, mensajes_nuevos: list) -> str:
     """
-    Si en este turno se consultaron horas, las lineas Mañana/Tarde de la respuesta
+    Si en este turno se consultaron horas, las lineas "En la mañana"/"En la tarde" de la respuesta
     se reemplazan por las que armo la herramienta (horas_por_franja), con su emoji y
     negrita. El prompt le pide al modelo copiarlas tal cual, pero a veces las
     reescribe (sin los asteriscos, o con otras horas); como el formato y las horas

@@ -51,7 +51,7 @@ def _formato_hora_12h(hora_24: str) -> str:
 
 def _horas_por_franja(horas_24: list[str]) -> str:
     """
-    Todas las horas libres agrupadas en 'Mañana' (antes de las 12:00) y 'Tarde'
+    Todas las horas libres agrupadas en 'En la mañana' (antes de las 12:00) y 'En la tarde'
     (desde las 12:00), en 12 h, ya listas para mostrarle al cliente tal cual.
     La arma el codigo y no el modelo: asi no omite, inventa ni reordena horas.
     """
@@ -59,9 +59,9 @@ def _horas_por_franja(horas_24: list[str]) -> str:
     tarde = [_formato_hora_12h(h) for h in horas_24 if h >= "12:00"]
     lineas = []
     if manana:
-        lineas.append("🌅 *Mañana:* " + ", ".join(manana))
+        lineas.append("🌅 *En la mañana:* " + ", ".join(manana))
     if tarde:
-        lineas.append("🌇 *Tarde:* " + ", ".join(tarde))
+        lineas.append("🌇 *En la tarde:* " + ", ".join(tarde))
     return "\n".join(lineas)
 
 
