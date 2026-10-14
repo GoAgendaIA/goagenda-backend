@@ -70,9 +70,9 @@ def test_formato_hora_12h(h24, h12):
 
 def test_horas_por_franja_agrupa_manana_y_tarde_con_todas_las_horas():
     horas = ["09:00", "11:30", "12:00", "14:30", "17:30"]
-    assert t._horas_por_franja(horas) == "Mañana: 9:00 am, 11:30 am\nTarde: 12:00 pm, 2:30 pm, 5:30 pm"
-    assert t._horas_por_franja(["14:00"]) == "Tarde: 2:00 pm"
-    assert t._horas_por_franja(["08:00"]) == "Mañana: 8:00 am"
+    assert t._horas_por_franja(horas) == "🌅 *Mañana:* 9:00 am, 11:30 am\n🌇 *Tarde:* 12:00 pm, 2:30 pm, 5:30 pm"
+    assert t._horas_por_franja(["14:00"]) == "🌇 *Tarde:* 2:00 pm"
+    assert t._horas_por_franja(["08:00"]) == "🌅 *Mañana:* 8:00 am"
     assert t._horas_por_franja([]) == ""
 
 
@@ -289,8 +289,8 @@ class TestConsultarHoras:
         # El texto lista TODAS las horas, las mismas que los botones, agrupadas en Mañana/Tarde.
         todas = [o["value"] for o in cmd.update["ultimas_opciones"]]
         lineas = datos["horas_por_franja"].split("\n")
-        mostradas = [h for linea in lineas for h in linea.split(": ", 1)[1].split(", ")]
-        assert mostradas == todas and lineas[0].startswith("Mañana: ")
+        mostradas = [h for linea in lineas for h in linea.split(":* ", 1)[1].split(", ")]
+        assert mostradas == todas and lineas[0].startswith("🌅 *Mañana:* ")
         assert "muestra_para_mostrar" not in datos
 
     def test_dia_cerrado(self, negocio):

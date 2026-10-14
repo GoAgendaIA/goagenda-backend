@@ -59,9 +59,9 @@ def _horas_por_franja(horas_24: list[str]) -> str:
     tarde = [_formato_hora_12h(h) for h in horas_24 if h >= "12:00"]
     lineas = []
     if manana:
-        lineas.append("Mañana: " + ", ".join(manana))
+        lineas.append("🌅 *Mañana:* " + ", ".join(manana))
     if tarde:
-        lineas.append("Tarde: " + ", ".join(tarde))
+        lineas.append("🌇 *Tarde:* " + ", ".join(tarde))
     return "\n".join(lineas)
 
 
