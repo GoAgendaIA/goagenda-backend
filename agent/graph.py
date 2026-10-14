@@ -17,6 +17,8 @@ from agent.flujos import (
     emoji_del_negocio,
     es_saludo_puro,
     flujos_activos,
+    hora_12h,
+    pregunta_por_horario,
     pregunta_por_servicios,
 )
 from agent.prompts_v2 import build_system_prompt_v2
@@ -341,42 +343,56 @@ def _datos_para_saludo(state: AgentState):
     return business, empleado, servicios
 
 
-def _ruta_inicial(state: AgentState) -> str:
-    """Entrada del grafo: un saludo puro al inicio de la conversacion se responde sin modelo (T3.1)."""
-    if "saludo" not in flujos_activos(CHAT_FLUJOS_DETERMINISTAS):
-        return "agent"
+def _tipo_faq(state: AgentState) -> str | None:
+    """
+    'horario' | 'servicios' si el ultimo mensaje es una pregunta frecuente que
+    se puede responder en codigo con datos reales del negocio (T4.1); si no, None.
+    Un empleado fijo o un negocio con varios empleados sin elegir siguen con el
+    modelo para 'servicios' (hay que preguntar con quien), igual que el saludo.
+    """
+    if "faq" not in flujos_activos(CHAT_FLUJOS_DETERMINISTAS):
+        return None
     if state.get("transferido") or state.get("escalado"):
-        return "agent"
+        return None
     mensajes = state["messages"]
     if not mensajes or not isinstance(mensajes[-1], HumanMessage):
-        return "agent"
-    if any(isinstance(m, AIMessage) for m in mensajes[:-1]):
-        return "agent"  # ya hubo conversacion: no se vuelve a presentar la lista
-    if not es_saludo_puro(mensajes[-1].content):
-        return "agent"
-    return "saludo" if _datos_para_saludo(state) is not None else "agent"
+        return None
+    ultimo = mensajes[-1].content
+    if pregunta_por_horario(ultimo) and get_business_by_id(state["business_id"]):
+        return "horario"
+    if pregunta_por_servicios(ultimo) and _datos_para_saludo(state) is not None:
+        return "servicios"
+    return None
 
 
-def _nodo_saludo(state: AgentState) -> dict:
+def _ruta_inicial(state: AgentState) -> str:
+    """Entrada del grafo: saludo puro al inicio (T3.1) y preguntas frecuentes (T4.1) se responden sin modelo."""
+    flujos = flujos_activos(CHAT_FLUJOS_DETERMINISTAS)
+    if "saludo" in flujos and not (state.get("transferido") or state.get("escalado")):
+        mensajes = state["messages"]
+        es_primer_turno = (
+            bool(mensajes)
+            and isinstance(mensajes[-1], HumanMessage)
+            and not any(isinstance(m, AIMessage) for m in mensajes[:-1])  # ya hubo conversacion: no se repite la lista
+        )
+        if es_primer_turno and es_saludo_puro(mensajes[-1].content):
+            return "saludo" if _datos_para_saludo(state) is not None else "agent"
+    return "faq" if _tipo_faq(state) else "agent"
+
+
+def _lista_de_servicios(state: AgentState, business: dict, empleado: dict, servicios: list[dict], intro: list[str]) -> dict:
     """
-    Responde el saludo con la lista REAL de servicios, igual que lo pide el
-    prompt (nombre del negocio + servicios con precio y duracion + una
-    pregunta) pero sin llamar al modelo. Deja en el historial el mismo par
+    Respuesta con la lista REAL de servicios (nombre, duracion, precio) y una
+    pregunta de cierre, sin llamar al modelo. Deja en el historial el mismo par
     llamada/resultado de consultar_servicios_disponibles que habria dejado el
     modelo, para que lo que sigue (botones, red de precios, turnos futuros) no
     note la diferencia.
     """
-    business, empleado, servicios = _datos_para_saludo(state)
     llamada_id = f"call_{uuid.uuid4().hex[:24]}"
     actualizacion = consultar_servicios_disponibles.func(state["business_id"], empleado["id"], llamada_id).update
 
-    nombre = business.get("name") or "el negocio"
     emoji = emoji_del_negocio(business.get("business_type"))
-    if state.get("employee_fijo") and state.get("employee_id"):
-        lineas = [f"¡Hola! 👋 Bienvenido a {nombre}, este enlace de chat pertenece a {empleado.get('name') or 'nuestro equipo'}."]
-    else:
-        lineas = [f"¡Hola! 👋 Bienvenido a {nombre}."]
-    lineas.append("Estos son nuestros servicios:")
+    lineas = [*intro, "Estos son nuestros servicios:"]
     for s in servicios:
         lineas.append(f"{emoji} *{s['name']}* - {s['duration_minutes']} min - {_formato_precio_cop(s['price'])}")
     lineas.append("¿Cuál te interesa o quieres agendar una cita?")
@@ -389,6 +405,61 @@ def _nodo_saludo(state: AgentState) -> dict:
         "ultimas_opciones": actualizacion.get("ultimas_opciones"),
         "employee_id": empleado["id"],
     }
+
+
+def _registrar_respuesta_sin_modelo(state: AgentState, tipo: str) -> None:
+    """Fila de 0 tokens (call_type 'sin_modelo_<tipo>'): permite medir cuantos turnos se resuelven sin gastar (KPI de la Fase 4)."""
+    registrar_uso(
+        state["business_id"], 0, 0, 0, tipo=f"sin_modelo_{tipo}", session_id=state.get("session_id"), modelo="ninguno"
+    )
+
+
+def _nodo_saludo(state: AgentState) -> dict:
+    """Saludo con nombre del negocio + servicios con precio y duracion + una pregunta (lo que pide el prompt)."""
+    business, empleado, servicios = _datos_para_saludo(state)
+    _registrar_respuesta_sin_modelo(state, "saludo")
+    nombre = business.get("name") or "el negocio"
+    if state.get("employee_fijo") and state.get("employee_id"):
+        intro = f"¡Hola! 👋 Bienvenido a {nombre}, este enlace de chat pertenece a {empleado.get('name') or 'nuestro equipo'}."
+    else:
+        intro = f"¡Hola! 👋 Bienvenido a {nombre}."
+    return _lista_de_servicios(state, business, empleado, servicios, [intro])
+
+
+_DIAS_PARA_CLIENTE = {"mon": "Lunes", "tue": "Martes", "wed": "Miércoles", "thu": "Jueves", "fri": "Viernes",
+                      "sat": "Sábado", "sun": "Domingo"}
+
+
+def _horario_para_cliente(business_id: str) -> str:
+    """Horario de atencion del negocio en 12 h, con el almuerzo si lo hay. Cerrado todo -> texto vacio."""
+    filas = client_supabase.table("business_hours").select("*").eq("business_id", business_id).execute().data
+    por_dia = {f["day"]: f for f in filas}
+    lineas = []
+    for dia, nombre_dia in _DIAS_PARA_CLIENTE.items():
+        info = por_dia.get(dia)
+        if not info or not info.get("is_open"):
+            lineas.append(f"• {nombre_dia}: cerrado")
+            continue
+        linea = f"• {nombre_dia}: {hora_12h(info['opening_time'])} a {hora_12h(info['closing_time'])}"
+        if info.get("lunch_start") and info.get("lunch_end"):
+            linea += f" (almuerzo de {hora_12h(info['lunch_start'])} a {hora_12h(info['lunch_end'])})"
+        lineas.append(linea)
+    abierto = any(por_dia.get(d, {}).get("is_open") for d in por_dia)
+    return "\n".join(lineas) if abierto else ""
+
+
+def _nodo_faq(state: AgentState) -> dict:
+    """Pregunta frecuente respondida en codigo (T4.1): horario o servicios/precios, sin tokens."""
+    if _tipo_faq(state) == "servicios":
+        business, empleado, servicios = _datos_para_saludo(state)
+        _registrar_respuesta_sin_modelo(state, "faq_servicios")
+        return _lista_de_servicios(state, business, empleado, servicios, [])
+    horario = _horario_para_cliente(state["business_id"])
+    if not horario:
+        # Sin horario configurado no hay nada que afirmar: lo contesta el modelo con el contexto completo.
+        return _agent_node(state)
+    _registrar_respuesta_sin_modelo(state, "faq_horario")
+    return {"messages": [AIMessage(content=f"Este es nuestro horario de atención:\n{horario}\n¿Quieres agendar una cita?")]}
 
 
 def _es_resumen_de_confirmacion(mensaje) -> bool:
@@ -565,9 +636,11 @@ def _build_graph():
     builder.add_node("agent", _agent_node)
     builder.add_node("tools", ToolNode(TOOLS))
     builder.add_node("saludo", _nodo_saludo)
+    builder.add_node("faq", _nodo_faq)
     builder.add_node("respuesta_directa", _nodo_respuesta_directa)
-    builder.add_conditional_edges(START, _ruta_inicial, {"saludo": "saludo", "agent": "agent"})
+    builder.add_conditional_edges(START, _ruta_inicial, {"saludo": "saludo", "faq": "faq", "agent": "agent"})
     builder.add_edge("saludo", END)
+    builder.add_edge("faq", END)
     builder.add_conditional_edges("agent", tools_condition, {"tools": "tools", END: END})
     builder.add_conditional_edges("tools", _despues_de_tools, {"agent": "agent", "directo": "respuesta_directa"})
     builder.add_edge("respuesta_directa", END)

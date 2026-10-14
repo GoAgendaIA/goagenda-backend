@@ -12,6 +12,8 @@ CHAT_FLUJOS_DETERMINISTAS: lista separada por comas o "all":
   - confirmacion: el resumen de pedir_confirmacion_cita se entrega tal cual.
   - servicios: ante una pregunta obvia por servicios/precios la primera
     llamada ya es la consulta (en vez de generar texto que luego se descarta).
+  - faq (T4.1): las preguntas por horario o por servicios/precios se responden
+    en codigo con los datos reales del negocio, sin llamar al modelo.
 
 CHAT_ENRUTAMIENTO=relay (con CHAT_MODEL_NAME_SIMPLE): las llamadas que solo
 tienen que relatar el resultado de una consulta usan el modelo barato.
@@ -20,7 +22,7 @@ tienen que relatar el resultado de una consulta usan el modelo barato.
 import re
 import unicodedata
 
-FLUJOS_DISPONIBLES = ("saludo", "confirmacion", "servicios")
+FLUJOS_DISPONIBLES = ("saludo", "confirmacion", "servicios", "faq")
 
 # Herramientas cuyo resultado el modelo solo tiene que relatar al cliente: no
 # deciden nada ni manejan dinero. crear_cita (link de pago exacto), cancelar,
@@ -79,6 +81,35 @@ def pregunta_por_servicios(texto: str | None) -> bool:
         return False
     normal = _normalizar(str(texto))
     return bool(_PREGUNTA_SERVICIOS.search(normal)) and not _ACCION.search(normal)
+
+
+_PREGUNTA_HORARIO = re.compile(
+    r"\bhorarios?\b"
+    r"|\ba que hora(?:s)? (?:abren|cierran|atienden|empiezan|comienzan|salen|trabajan)\b"
+    r"|\bhasta que hora (?:abren|atienden|trabajan|cierran|estan)\b"
+    r"|\bque dias (?:abren|atienden|trabajan|laboran)\b"
+    r"|\b(?:abren|atienden|trabajan) (?:los )?(?:domingos|sabados|festivos|fines de semana)\b"
+)
+# Un horario "para un dia concreto" es disponibilidad (la calculan las herramientas), no el horario del negocio.
+_FECHA_CONCRETA = re.compile(
+    r"\b(?:hoy|manana|pasado|lunes|martes|miercoles|jueves|viernes|sabado|domingo|esta semana|proxima|semana|"
+    r"disponible|disponibles|libre|libres|cupo|cupos)\b|\d"
+)
+
+
+def pregunta_por_horario(texto: str | None) -> bool:
+    """True si el cliente solo pregunta el horario de atencion del negocio (no la disponibilidad de un dia)."""
+    if not texto:
+        return False
+    normal = _normalizar(str(texto))
+    return bool(_PREGUNTA_HORARIO.search(normal)) and not _ACCION.search(normal) and not _FECHA_CONCRETA.search(normal)
+
+
+def hora_12h(hora_24: str) -> str:
+    """'09:00:00' / '18:30' -> '9:00 a. m.' / '6:30 p. m.' (el bot nunca habla en 24 h)."""
+    horas, minutos = int(hora_24[:2]), hora_24[3:5]
+    sufijo = "a. m." if horas < 12 else "p. m."
+    return f"{horas % 12 or 12}:{minutos} {sufijo}"
 
 
 def emoji_del_negocio(tipo: str | None) -> str:

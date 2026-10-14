@@ -253,7 +253,10 @@ def _resumen_periodo(
     convs = [s for s in conversaciones if _en_rango(_a_local(s.get("started_at")), desde, hasta)]
     con_cita = sum(1 for s in convs if s.get("ended_in_appointment"))
     transferidas = sum(1 for s in convs if s.get("handed_off"))
-    uso_periodo = [u for u in uso_ia if _en_rango(_a_local(u.get("created_at")), desde, hasta)]
+    uso_todo = [u for u in uso_ia if _en_rango(_a_local(u.get("created_at")), desde, hasta)]
+    # Las respuestas sin modelo (T4.1) dejan una fila de 0 tokens: no son llamadas al modelo.
+    sin_modelo = sum(1 for u in uso_todo if str(u.get("call_type") or "").startswith("sin_modelo"))
+    uso_periodo = [u for u in uso_todo if not str(u.get("call_type") or "").startswith("sin_modelo")]
     costo = round(sum(float(u.get("estimated_cost_usd") or 0) for u in uso_periodo), 6)
     tokens_entrada = sum(int(u.get("prompt_tokens") or 0) for u in uso_periodo)
     tokens_cacheados = sum(int(u.get("cached_tokens") or 0) for u in uso_periodo)
@@ -335,6 +338,7 @@ def _resumen_periodo(
                 "salida": tokens_salida,
                 "porcentaje_cache": _porcentaje(tokens_cacheados, tokens_entrada),
                 "re_llamadas_anti_alucinacion": re_llamadas,
+                "respuestas_sin_modelo": sin_modelo,
                 "llamadas_por_conversacion": round(len(uso_periodo) / len(convs), 1) if convs else None,
                 "tokens_entrada_por_conversacion": round(tokens_entrada / len(convs)) if convs else None,
                 "costo_por_conversacion_usd": round(costo / len(convs), 4) if convs else None,
