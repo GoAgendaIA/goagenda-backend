@@ -68,3 +68,18 @@ def test_no_se_borran_horas_que_no_estan_bajo_un_titulo_de_franja():
     texto_modelo = "Tu cita sería a las:\n9:00 am\nEn la mañana: 9:30 am\n10:00 am\n¿Te sirve?"
     resultado = g._con_franjas_canonicas(texto_modelo, [_horas()])
     assert resultado == f"Tu cita sería a las:\n9:00 am\n{CANONICO}\n¿Te sirve?"
+
+
+def test_el_historial_guardado_ya_trae_las_franjas_corregidas(negocio, modelos):
+    """El widget recarga el historial persistido: tiene que traer lo mismo que la respuesta inmediata."""
+    sid = str(uuid.uuid4())
+    modelos.principal.respuestas = [
+        llamada("consultar_horas_disponibles", {"fecha": "2026-10-10"}),
+        texto("Claro:\n\nEn la mañana:\n• 9:00 am\n\nEn la tarde:\n• 2:00 pm\n\n¿Cuál prefieres?"),
+    ]
+    enviar("quiero para el sábado", sid, employee_id="emp-1")
+    historial, _ = g.obtener_historial(BIZ, sid)
+    ultimo = historial[-1]["content"]
+    assert "🌅 *En la mañana:*\n• 9:00 am" in ultimo and "🌇 *En la tarde:*\n• " in ultimo
+    assert "En la mañana:\n•" not in ultimo.replace("*En la mañana:*", "")  # sin la version reescrita
+    assert ultimo.rstrip().endswith("\n\n¿Cuál prefieres?") and "\n\n\n" not in ultimo

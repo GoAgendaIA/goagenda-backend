@@ -574,6 +574,14 @@ def _agent_node(state: AgentState) -> dict:
             if forzada is not None and getattr(forzada, "tool_calls", None):
                 response = forzada
 
+    if not getattr(response, "tool_calls", None) and isinstance(response.content, str):
+        # Se corrige ANTES de guardar: asi el historial que el widget recarga trae
+        # el mismo texto (con negritas y franjas) que la respuesta inmediata.
+        desde = max((i for i, m in enumerate(state["messages"]) if isinstance(m, HumanMessage)), default=-1) + 1
+        corregido = _con_franjas_canonicas(response.content, state["messages"][desde:])
+        if corregido != response.content:
+            response = response.model_copy(update={"content": corregido})
+
     return {"messages": [response]}
 
 
@@ -781,7 +789,8 @@ def _con_franjas_canonicas(texto: str, mensajes_nuevos: list) -> str:
         return texto
     posicion = min(quitar)
     resto = [linea for i, linea in enumerate(lineas) if i not in quitar]
-    return "\n".join(resto[:posicion] + canonico.split("\n") + resto[posicion:])
+    unido = "\n".join(resto[:posicion] + canonico.split("\n") + resto[posicion:])
+    return re.sub(r"\n{3,}", "\n\n", unido)  # las lineas en blanco que dejaba el bloque original
 
 
 def _respuesta_de_turno(mensajes: list, desde: int, ultimas_opciones, service_id, employee_id) -> tuple[str, list[dict] | None]:
