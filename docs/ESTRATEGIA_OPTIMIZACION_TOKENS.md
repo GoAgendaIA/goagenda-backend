@@ -122,7 +122,9 @@ Detiene la hemorragia y fija la línea base.
 | T2.1 Evaluación | Código listo y probado: 34 escenarios, ejecutor con tope de gasto y reporte comparable (`evaluacion/`) | **Correrla en vivo con una clave propia** (`evaluacion/README.md`) para fijar la línea base |
 | T2.2 Prompt compacto | Código listo y probado, detrás de `CHAT_PROMPT_VERSION=v2` (apagado). Simple: ~5.0 k → ~2.1 k tokens (**−57 %**) | Evaluación en vivo v1 vs v2 antes de activarlo |
 | T2.3 Herramientas compactas | Código listo y probado, detrás de `CHAT_TOOLS_VERSION=v2` (apagado). ~2.85 k → ~1.5 k tokens (**−48 %**) | Evaluación en vivo antes de activarlo |
-| Fases 3 y 4 | Sin empezar | — |
+| T3.1 Menos llamadas | Código listo y probado, detrás de `CHAT_FLUJOS_DETERMINISTAS` (apagado): saludo sin modelo, resumen de confirmación sin llamada de relevo y consulta de servicios en la primera llamada | Evaluación en vivo y medir llamadas por conversación (meta −30 %) |
+| T3.2 Enrutamiento de modelo | Código listo y probado, detrás de `CHAT_ENRUTAMIENTO=relay` + `CHAT_MODEL_NAME_SIMPLE` (apagado) | Evaluar modelos baratos con T2.1 antes de elegir uno |
+| Fase 4 | Sin empezar | — |
 
 ### Notas de la implementación
 
@@ -158,3 +160,24 @@ Detiene la hemorragia y fija la línea base.
 1. Correr la evaluación con la configuración actual (`EVAL_ETIQUETA=base`).
 2. Correrla con `CHAT_PROMPT_VERSION=v2` y/o `CHAT_TOOLS_VERSION=v2` y compararlas con `python -m evaluacion.comparar`.
 3. Si no hay regresiones, activarlo primero en el VPS de pruebas y luego en producción, vigilando `ia.tokens` en el Centro de métricas.
+
+### Notas de T3.1 y T3.2
+
+**T3.1: qué atajos hay y cuándo se activan**
+
+| Atajo (`CHAT_FLUJOS_DETERMINISTAS`) | Qué hace | Cuándo NO aplica | Llamadas que evita |
+|---|---|---|---|
+| `saludo` | Un saludo puro ("hola", "buenas tardes") al inicio se responde en código con la lista real de servicios y los botones; deja en el historial el mismo par llamada/resultado de `consultar_servicios_disponibles` | Varios empleados sin chat fijo, ya hubo conversación, el mensaje trae algo más, cliente transferido | 2 |
+| `confirmacion` | El resumen exitoso de `pedir_confirmacion_cita` se entrega tal cual | Resultados de error (los explica el modelo), varias herramientas a la vez | 1 por reserva |
+| `servicios` | Ante "¿qué servicios tienen / cuánto cuesta?" la primera llamada ya es la consulta (antes: texto descartado por la red anti-alucinación y luego otra llamada) | El mensaje pide agendar o gestionar, o hay varios empleados sin elegir | 1 |
+
+- **Hallazgo durante la implementación:** `ToolNode` de LangGraph le pone el nombre de la herramienta también a sus mensajes de error, así que el resumen exitoso se distingue por su contenido (termina en «¿Confirmo tu cita?», el mismo criterio de coherencia de botones) y no por el nombre.
+- **No se hizo** una plantilla para el mensaje posterior a `crear_cita`: involucra links de pago exactos, domicilios y el tono del negocio; es de donde menos se gana y más se arriesga.
+
+**T3.2: enrutamiento**
+
+- Con `CHAT_ENRUTAMIENTO=relay`, la llamada que solo tiene que **relatar** el resultado de una consulta (servicios, horas, empleados, zonas, teléfono registrado, selecciones y consulta de citas) usa `CHAT_MODEL_NAME_SIMPLE`.
+- **Siempre con el modelo principal:** `crear_cita` (link de pago exacto), cancelar, reprogramar y las herramientas de escalamiento.
+- El costo se registra con el modelo real de cada llamada (tipo `relevo` en `ai_usage_log`).
+- **Compromiso conocido:** la caché de prompt es por modelo; el modelo simple mantiene su propia caché (se calienta con sus propias llamadas).
+- La clasificación es por posición en el flujo (qué acaba de ocurrir), no por un clasificador con LLM: es determinista y no cuesta tokens.

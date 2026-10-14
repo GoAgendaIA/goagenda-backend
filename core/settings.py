@@ -68,3 +68,10 @@ CHAT_HISTORIAL_MAX_TURNOS = _entero_env("CHAT_HISTORIAL_MAX_TURNOS", 12)
 # confirme que no degradan la calidad.
 CHAT_PROMPT_VERSION = (os.getenv("CHAT_PROMPT_VERSION") or "v1").strip().lower()
 CHAT_TOOLS_VERSION = (os.getenv("CHAT_TOOLS_VERSION") or "v1").strip().lower()
+
+# --- Fase 3: menos llamadas al modelo y enrutamiento (agent/flujos.py). Todo apagado por defecto. ---
+# Lista separada por comas (saludo, confirmacion, servicios) o "all".
+CHAT_FLUJOS_DETERMINISTAS = (os.getenv("CHAT_FLUJOS_DETERMINISTAS") or "").strip().lower()
+# "relay": las llamadas que solo relatan un resultado usan CHAT_MODEL_NAME_SIMPLE.
+CHAT_ENRUTAMIENTO = (os.getenv("CHAT_ENRUTAMIENTO") or "").strip().lower()
+CHAT_MODEL_NAME_SIMPLE = (os.getenv("CHAT_MODEL_NAME_SIMPLE") or "").strip()

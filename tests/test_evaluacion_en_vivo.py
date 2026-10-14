@@ -34,7 +34,10 @@ def corrida():
         etiqueta=os.environ.get("EVAL_ETIQUETA") or "corrida",
         modelo=modelo,
         configuracion={"prompt": settings.CHAT_PROMPT_VERSION, "tools": settings.CHAT_TOOLS_VERSION,
-                       "historial_turnos": settings.CHAT_HISTORIAL_MAX_TURNOS},
+                       "historial_turnos": settings.CHAT_HISTORIAL_MAX_TURNOS,
+                       "flujos_deterministas": settings.CHAT_FLUJOS_DETERMINISTAS or "off",
+                       "enrutamiento": settings.CHAT_ENRUTAMIENTO or "off",
+                       "modelo_simple": settings.CHAT_MODEL_NAME_SIMPLE or None},
         tope_usd=TOPE_USD,
     )
     ruta = ejecutor.guardar_reporte(reporte)
