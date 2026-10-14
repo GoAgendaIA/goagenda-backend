@@ -1,3 +1,4 @@
+import json
 import re
 import unicodedata
 from datetime import datetime
@@ -360,6 +361,47 @@ def _formato_precio_cop(precio) -> str:
         return "$0"
 
 
+def _json_compacto(dato) -> str:
+    """
+    Serializa el resultado de una tool para el modelo: JSON sin espacios en vez
+    del repr de Python (str(dict)). Es mas corto, y sus booleanos (true/false)
+    coinciden con como los nombra el prompt. Se reenvia en cada llamada
+    posterior del turno, asi que cada caracter cuenta (T1.3).
+    """
+    return json.dumps(dato, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def _numero_limpio(valor):
+    """15000.0 -> 15000 (sin decimales inutiles); cualquier otra cosa queda igual."""
+    try:
+        return int(valor) if float(valor).is_integer() else valor
+    except (TypeError, ValueError):
+        return valor
+
+
+def _servicio_para_modelo(servicio: dict, domicilios_activos: bool) -> dict:
+    """
+    Solo los campos de un servicio que el modelo usa. La fila de la base trae
+    columnas internas (business_id, created_at, active, campos de abono...) que
+    se pagaban en cada llamada sin servirle de nada.
+    """
+    fila = {
+        "id": servicio.get("id"),
+        "name": servicio.get("name"),
+        "duration_minutes": servicio.get("duration_minutes"),
+        "price": _numero_limpio(servicio.get("price")),
+    }
+    # Domicilios desactivados: el modelo no debe ver el campo, asi no ofrece domicilio.
+    if domicilios_activos and "offers_home_visit" in servicio:
+        fila["offers_home_visit"] = bool(servicio["offers_home_visit"])
+    if servicio.get("requires_payment"):
+        fila["requires_payment"] = True
+        for campo in ("payment_type", "payment_percentage", "payment_fixed_amount_cents"):
+            if servicio.get(campo) is not None:
+                fila[campo] = _numero_limpio(servicio[campo])
+    return fila
+
+
 def _formato_telefono_visible(client_phone: str | None) -> str:
     """
     client_phone en el estado ya viene normalizado con indicativo de pais
@@ -521,7 +563,7 @@ def consultar_empleados_disponibles(
             ],
             "messages": [
                 ToolMessage(
-                    content=str(resultado), name="consultar_empleados_disponibles", tool_call_id=tool_call_id
+                    content=_json_compacto(resultado), name="consultar_empleados_disponibles", tool_call_id=tool_call_id
                 )
             ],
         }
@@ -575,10 +617,8 @@ def consultar_servicios_disponibles(
     y duracion.
     """
     servicios = get_employee_services(employee_id) if employee_id else get_services(business_id)
-    if not _domicilios_activos(business_id):
-        # Domicilios desactivados: el modelo no debe ver el campo, asi no ofrece domicilio.
-        servicios = [{k: v for k, v in s.items() if k != "offers_home_visit"} for s in servicios]
-    resultado = {"servicios": servicios}
+    domicilios_activos = _domicilios_activos(business_id)
+    resultado = {"servicios": [_servicio_para_modelo(s, domicilios_activos) for s in servicios]}
 
     return Command(
         update={
@@ -593,7 +633,7 @@ def consultar_servicios_disponibles(
             ],
             "messages": [
                 ToolMessage(
-                    content=str(resultado), name="consultar_servicios_disponibles", tool_call_id=tool_call_id
+                    content=_json_compacto(resultado), name="consultar_servicios_disponibles", tool_call_id=tool_call_id
                 )
             ],
         }
@@ -724,7 +764,9 @@ def consultar_horas_disponibles(
                 {"label": _formato_hora_12h(h), "value": _formato_hora_12h(h)} for h in horas_libres
             ],
             "messages": [
-                ToolMessage(content=str(resultado), name="consultar_horas_disponibles", tool_call_id=tool_call_id)
+                ToolMessage(
+                    content=_json_compacto(resultado), name="consultar_horas_disponibles", tool_call_id=tool_call_id
+                )
             ],
         }
     )
@@ -1323,7 +1365,9 @@ def consultar_zonas_domicilio(
     }
     return Command(
         update={
-            "messages": [ToolMessage(content=str(resultado), name="consultar_zonas_domicilio", tool_call_id=tool_call_id)]
+            "messages": [
+                ToolMessage(content=_json_compacto(resultado), name="consultar_zonas_domicilio", tool_call_id=tool_call_id)
+            ]
         }
     )
 

@@ -121,3 +121,19 @@ def enviar_notificacion_escalamiento(fcm_token: str, nombre_cliente: str, busine
         cuerpo=f"{nombre_cliente} esta esperando que alguien del equipo siga la conversacion.",
         data={"tipo": "chat_escalado", "business_id": business_id, "session_id": session_id},
     )
+
+def enviar_notificacion_presupuesto_agotado(fcm_token: str, gasto_texto: str, presupuesto_texto: str):
+    """
+    Notifica al dueño que el asistente de IA se pauso porque el negocio llego a
+    su presupuesto mensual (ver services/ai_usage_tracking.py:presupuesto_agotado).
+    Es distinta de la alerta del 80 %: aqui el bot YA no responde a los clientes.
+    """
+    _enviar_push(
+        fcm_token,
+        titulo="Asistente de IA pausado",
+        cuerpo=(
+            f"Llegaste a tu presupuesto mensual de IA ({gasto_texto} de {presupuesto_texto}). "
+            "Tus clientes veran un aviso con tu contacto hasta el proximo mes o hasta que subas el presupuesto."
+        ),
+        data={"tipo": "presupuesto_ia_agotado"},
+    )

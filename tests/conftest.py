@@ -151,6 +151,18 @@ def _sin_cache_de_geocodificacion():
     geocoding._cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _sin_estado_de_salvaguardas():
+    """El limitador de peticiones y el cache de presupuesto viven en memoria: no deben filtrarse entre pruebas."""
+    from services import ai_usage_tracking, rate_limit
+
+    rate_limit.reiniciar()
+    ai_usage_tracking.limpiar_cache_presupuesto()
+    yield
+    rate_limit.reiniciar()
+    ai_usage_tracking.limpiar_cache_presupuesto()
+
+
 @pytest.fixture
 def cliente():
     """TestClient sobre la app REAL de main.py (seguro de importar gracias al aislamiento de arriba)."""

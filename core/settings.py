@@ -28,3 +28,36 @@ DB_POOL_MAX_SIZE = int(os.getenv("DB_POOL_MAX_SIZE") or 4)
 # Segundos que una peticion espera por una conexion libre antes de fallar
 # (default de psycopg_pool: 30s, que se sumaba a la espera del cliente).
 DB_POOL_TIMEOUT = float(os.getenv("DB_POOL_TIMEOUT") or 10)
+
+
+# ---------------------------------------------------------------------
+# Salvaguardas de costo del chat publico (ver docs/ESTRATEGIA_OPTIMIZACION_TOKENS.md).
+# El chat es publico por diseño: cualquiera puede mandarle mensajes, y cada
+# mensaje cuesta tokens de OpenAI. Todos son ajustables por variable de entorno.
+# ---------------------------------------------------------------------
+def _entero_env(nombre: str, por_defecto: int) -> int:
+    try:
+        return int(os.getenv(nombre) or por_defecto)
+    except ValueError:
+        return por_defecto
+
+
+# Largo maximo de un mensaje del cliente: un mensaje enorme se paga completo
+# en cada llamada del turno (y en las siguientes, porque queda en el historial).
+CHAT_MENSAJE_MAX_CARACTERES = _entero_env("CHAT_MENSAJE_MAX_CARACTERES", 600)
+# Ventana de 60 s por sesion (una persona real escribe a esa velocidad) y por IP.
+CHAT_LIMITE_SESION_POR_MINUTO = _entero_env("CHAT_LIMITE_SESION_POR_MINUTO", 12)
+CHAT_LIMITE_IP_POR_MINUTO = _entero_env("CHAT_LIMITE_IP_POR_MINUTO", 40)
+# Tope de mensajes por sesion en una hora: corta conversaciones sin fin.
+CHAT_LIMITE_SESION_POR_HORA = _entero_env("CHAT_LIMITE_SESION_POR_HORA", 80)
+# Tope de tokens de la RESPUESTA del modelo (los argumentos de las tools tambien cuentan).
+LLM_MAX_TOKENS_SALIDA = _entero_env("LLM_MAX_TOKENS_SALIDA", 600)
+# Corte duro del presupuesto mensual de IA por negocio. Por defecto APAGADO:
+# el presupuesto por defecto es de US$5 y activarlo sin medir antes podria
+# dejar sin bot a un negocio real. Activar despues de fijar la linea base (T0.1).
+AI_PRESUPUESTO_CORTE_DURO = (os.getenv("AI_PRESUPUESTO_CORTE_DURO") or "").strip().lower() in ("1", "true", "yes", "si")
+
+# Cuantos turnos del cliente (mensajes humanos) se envian al modelo. El historial
+# completo sigue guardado: esto solo acota lo que viaja en cada llamada, cuyo
+# costo crecia con la longitud de la conversacion (T1.2).
+CHAT_HISTORIAL_MAX_TURNOS = _entero_env("CHAT_HISTORIAL_MAX_TURNOS", 12)

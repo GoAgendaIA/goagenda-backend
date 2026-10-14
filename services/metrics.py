@@ -158,7 +158,8 @@ def _conversaciones(business_id: str | None) -> list[dict]:
 
 def _uso_ia(business_id: str | None) -> list[dict]:
     def consulta():
-        q = supabase.table("ai_usage_log").select("business_id, estimated_cost_usd, created_at").order("created_at")
+        # select("*"): las columnas de tokens (tokens_uso_ia.sql) pueden no existir todavia.
+        q = supabase.table("ai_usage_log").select("*").order("created_at")
         return q.eq("business_id", business_id) if business_id else q
 
     return _traer_todo(consulta)
@@ -252,10 +253,12 @@ def _resumen_periodo(
     convs = [s for s in conversaciones if _en_rango(_a_local(s.get("started_at")), desde, hasta)]
     con_cita = sum(1 for s in convs if s.get("ended_in_appointment"))
     transferidas = sum(1 for s in convs if s.get("handed_off"))
-    costo = round(
-        sum(float(u.get("estimated_cost_usd") or 0) for u in uso_ia if _en_rango(_a_local(u.get("created_at")), desde, hasta)),
-        6,
-    )
+    uso_periodo = [u for u in uso_ia if _en_rango(_a_local(u.get("created_at")), desde, hasta)]
+    costo = round(sum(float(u.get("estimated_cost_usd") or 0) for u in uso_periodo), 6)
+    tokens_entrada = sum(int(u.get("prompt_tokens") or 0) for u in uso_periodo)
+    tokens_cacheados = sum(int(u.get("cached_tokens") or 0) for u in uso_periodo)
+    tokens_salida = sum(int(u.get("completion_tokens") or 0) for u in uso_periodo)
+    re_llamadas = sum(1 for u in uso_periodo if u.get("call_type") == "re_llamada_anti_alucinacion")
 
     # --- Rendimiento: por fecha programada --------------------------------
     programadas_periodo = [c for c in reales if _en_rango(_a_local(c.get("scheduled_at")), desde, hasta)]
@@ -324,6 +327,18 @@ def _resumen_periodo(
             },
             "costo_usd": costo,
             "costo_por_cita_ia_usd": round(costo / citas_ia, 4) if citas_ia else None,
+            # Optimizacion de tokens (T0.1): linea base para medir cada ahorro.
+            "tokens": {
+                "llamadas": len(uso_periodo),
+                "entrada": tokens_entrada,
+                "cacheados": tokens_cacheados,
+                "salida": tokens_salida,
+                "porcentaje_cache": _porcentaje(tokens_cacheados, tokens_entrada),
+                "re_llamadas_anti_alucinacion": re_llamadas,
+                "llamadas_por_conversacion": round(len(uso_periodo) / len(convs), 1) if convs else None,
+                "tokens_entrada_por_conversacion": round(tokens_entrada / len(convs)) if convs else None,
+                "costo_por_conversacion_usd": round(costo / len(convs), 4) if convs else None,
+            },
         },
         "rendimiento": {
             "servicios_mas_agendados": top_servicios,

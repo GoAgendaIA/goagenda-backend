@@ -1,5 +1,6 @@
 """Pruebas de agent/tools.py: helpers de validacion y cada tool del agente (llamando .func directamente)."""
 
+import json
 from datetime import datetime
 from unittest.mock import MagicMock
 
@@ -280,11 +281,12 @@ class TestConsultarHoras:
     def test_horas_libres_con_duracion_del_servicio(self, negocio):
         cmd = t.consultar_horas_disponibles.func(SABADO, BIZ, "emp-1", "tc", humano("el sabado"), "tinte")
         assert [o["value"] for o in cmd.update["ultimas_opciones"]] == ["9:00 am", "9:30 am", "10:00 am", "10:30 am", "11:00 am"]
-        assert "'negocio_abierto_ese_dia': True" in contenido(cmd) and "'dia_semana': 'sabado'" in contenido(cmd)
+        datos = json.loads(contenido(cmd))
+        assert datos["negocio_abierto_ese_dia"] is True and datos["dia_semana"] == "sabado"
 
     def test_dia_cerrado(self, negocio):
         cmd = t.consultar_horas_disponibles.func("2026-10-11", BIZ, "emp-1", "tc", humano("el domingo"), "Servicio que no existe")
-        assert cmd.update["ultimas_opciones"] == [] and "'negocio_abierto_ese_dia': False" in contenido(cmd)
+        assert cmd.update["ultimas_opciones"] == [] and json.loads(contenido(cmd))["negocio_abierto_ese_dia"] is False
 
 
 # --- pedir_confirmacion_cita -----------------------------------------------------------------
@@ -566,7 +568,8 @@ def test_escalar_por_confusion(negocio, sin_efectos_externos):
 
 def test_consultar_zonas_domicilio(negocio, db):
     cmd = t.consultar_zonas_domicilio.func(BIZ, "tc")
-    assert "'nombre': 'Betulia', 'recargo': '$5.000'" in contenido(cmd) and "'sin_restriccion': False" in contenido(cmd)
+    datos = json.loads(contenido(cmd))
+    assert {"nombre": "Betulia", "recargo": "$5.000"} in datos["zonas"] and datos["sin_restriccion"] is False
     db.filas("businesses")[0]["home_visits_enabled"] = False
     assert "no hace domicilios" in contenido(t.consultar_zonas_domicilio.func(BIZ, "tc"))
 
@@ -575,3 +578,47 @@ def test_lista_de_tools_expuestas_al_modelo():
     nombres = {tool.name for tool in t.TOOLS}
     assert {"crear_cita", "cancelar_cita", "reprogramar_cita", "pedir_confirmacion_cita", "transferir_a_equipo"} <= nombres
     assert all(isinstance(tool.description, str) and tool.description for tool in t.TOOLS)
+
+
+# --- T1.3: salidas de herramientas compactas ---------------------------------------------------------------
+
+class TestSalidasCompactas:
+    def test_servicios_solo_con_los_campos_que_usa_el_modelo(self, negocio, db):
+        # Una fila "real" de la base trae columnas internas que el modelo no necesita.
+        db.sembrar("services", {"id": "s-extra", "business_id": BIZ, "name": "Barba", "duration_minutes": 20, "price": 8000.0,
+                                "active": True, "offers_home_visit": True, "requires_payment": False,
+                                "payment_type": None, "payment_percentage": None, "payment_fixed_amount_cents": None,
+                                "payment_description": "interno", "created_at": "2026-01-01T00:00:00"})
+        datos = json.loads(contenido(t.consultar_servicios_disponibles.func(BIZ, None, "tc")))
+        barba = next(s for s in datos["servicios"] if s["name"] == "Barba")
+        assert barba == {"id": "s-extra", "name": "Barba", "duration_minutes": 20, "price": 8000, "offers_home_visit": True}
+        assert all("business_id" not in s and "created_at" not in s and "active" not in s for s in datos["servicios"])
+
+    def test_servicio_con_abono_conserva_su_configuracion_de_pago(self, negocio, db):
+        db.sembrar("services", {"id": "s-abono", "business_id": BIZ, "name": "Color", "duration_minutes": 90, "price": 120000.0,
+                                "active": True, "offers_home_visit": False, "requires_payment": True,
+                                "payment_type": "percentage", "payment_percentage": 50.0, "payment_fixed_amount_cents": None})
+        datos = json.loads(contenido(t.consultar_servicios_disponibles.func(BIZ, None, "tc")))
+        color = next(s for s in datos["servicios"] if s["name"] == "Color")
+        assert color["requires_payment"] is True and color["payment_type"] == "percentage" and color["payment_percentage"] == 50
+        assert "payment_fixed_amount_cents" not in color
+
+    def test_reduce_al_menos_40_por_ciento_los_tokens_de_la_lista_de_servicios(self, negocio, db):
+        filas = db.filas("services")
+        antes = str({"servicios": filas})  # el formato anterior: repr del dict completo de la base
+        despues = contenido(t.consultar_servicios_disponibles.func(BIZ, None, "tc"))
+        assert len(despues) <= len(antes) * 0.6
+
+    def test_el_precio_sigue_visible_como_numero_para_la_red_anti_alucinacion(self, negocio):
+        """_precios_no_respaldados busca numeros en las salidas de tools: el precio no puede desaparecer."""
+        from agent import graph as g
+
+        mensaje = ToolMessage(content=contenido(t.consultar_servicios_disponibles.func(BIZ, None, "tc")),
+                              name="consultar_servicios_disponibles", tool_call_id="c")
+        assert g._precios_no_respaldados("El corte cuesta $15.000", [mensaje], [], BIZ) == []
+        assert g._precios_no_respaldados("El corte cuesta $99.000", [mensaje], [], BIZ) == [99000]
+
+    def test_json_compacto_y_numeros(self):
+        assert t._json_compacto({"a": [1, 2], "b": True, "n": "ñ"}) == '{"a":[1,2],"b":true,"n":"ñ"}'
+        assert t._numero_limpio(15000.0) == 15000 and t._numero_limpio(15000.5) == 15000.5
+        assert t._numero_limpio(None) is None and t._numero_limpio("abc") == "abc"
