@@ -111,7 +111,27 @@ def test_rendimiento_servicios_horas_domicilio_e_ingresos(datos):
     assert r["domicilios"] == {"total": 1, "porcentaje": 25.0}
     assert {h["hora"] for h in r["citas_por_hora"]} == {10, 11, 15}
     assert sum(d["total"] for d in r["citas_por_dia_semana"]) == 4
-    assert r["ingresos_estimados"] == {"completadas": 30000.0, "por_realizar": 95000.0, "recargos_domicilio": 5000.0}
+    # Todas ya pasaron (AHORA es posterior): cuentan las no canceladas, aunque nadie las marcara "completed".
+    assert r["ingresos_estimados"] == {"completadas": 125000.0, "por_realizar": 0.0, "recargos_domicilio": 5000.0}
+
+
+def test_ingresos_se_deciden_por_la_fecha_y_no_por_el_estado(db, datos):
+    """Bug: las citas pasadas seguian "confirmed", asi que 'completadas' mostraba 0 y todo salia por realizar."""
+    db.sembrar("appointments",
+               cita(telefono="3170000001", programada="2026-10-14T09:00:00"),                      # pasada, confirmada
+               cita(telefono="3170000002", programada="2026-10-14T10:00:00", status="cancelled", cancelled_by="ai"),
+               cita(telefono="3170000003", programada="2026-10-20T10:00:00"),                      # futura, confirmada
+               cita(telefono="3170000004", programada="2026-10-21T10:00:00", status="pending_payment", servicio="s-tinte"),
+               cita(telefono="3170000005", programada="2026-10-22T10:00:00", status="cancelled", cancelled_by="ai"))
+    ing = metrics.metricas_negocio(BIZ, DESDE, date(2026, 10, 31))["rendimiento"]["ingresos_estimados"]
+    assert ing["completadas"] == 125000.0 + 15000.0       # las de antes + la pasada confirmada (la cancelada no suma)
+    assert ing["por_realizar"] == 15000.0 + 80000.0       # solo las futuras no canceladas
+
+
+def test_una_cita_de_hoy_cuya_hora_no_ha_llegado_sigue_por_realizar(db, datos):
+    db.sembrar("appointments", cita(telefono="3180000001", programada=f"{AHORA.date().isoformat()}T23:30:00"))
+    ing = metrics.metricas_negocio(BIZ, DESDE, date(2026, 10, 31))["rendimiento"]["ingresos_estimados"]
+    assert ing["por_realizar"] == 15000.0
 
 
 def test_global_es_la_suma_de_los_negocios(datos):

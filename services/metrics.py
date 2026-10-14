@@ -287,9 +287,16 @@ def _resumen_periodo(
     ingresos_completadas = 0.0
     ingresos_por_realizar = 0.0
     recargos_domicilio = 0.0
+    # Nadie marca las citas como "completed" (no hay endpoint ni flujo que lo haga), asi que
+    # el estado no sirve para saber si una cita ya se realizo. Se decide por la FECHA:
+    # una cita no cancelada cuya hora ya paso es un ingreso realizado; una futura
+    # (confirmada o con pago pendiente) es un ingreso por realizar.
     for c in programadas_periodo:
+        if c.get("status") == "cancelled":
+            continue
         precio = float((servicios.get(c.get("service_id")) or {}).get("price") or 0)
-        if c.get("status") == "completed":
+        # programadas_periodo ya descarto las fechas vacias o invalidas.
+        if c.get("status") == "completed" or _a_local(c.get("scheduled_at")) < ahora:
             ingresos_completadas += precio
             recargos_domicilio += float(c.get("home_visit_fee") or 0)
         elif c.get("status") in ("confirmed", "pending", "pending_payment"):
