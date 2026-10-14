@@ -3,6 +3,15 @@ name: Test, Build and Deploy
 on:
   push:
     branches: [main]
+  # Las pruebas tambien corren en cada PR (a cualquier base: hay PR apilados).
+  # Los jobs de build y deploy solo corren en push a main (ver su `if`).
+  pull_request:
+
+# Un push nuevo a un PR cancela la corrida anterior de ese PR; en main nunca se
+# cancela una corrida en curso (podria cortar un deploy a medias).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
@@ -35,6 +44,8 @@ jobs:
         run: pytest --cov --cov-report=term-missing
 
   build-and-push:
+    # Solo en main: un PR nunca publica imagenes ni toca el registro.
+    if: github.event_name == 'push'
     needs: test
     runs-on: ubuntu-latest
     permissions:
@@ -65,6 +76,8 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
+    # Solo en main: un PR nunca despliega.
+    if: github.event_name == 'push'
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
