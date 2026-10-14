@@ -260,11 +260,16 @@ def test_metricas_incluyen_tokens_cache_y_costo_por_conversacion(db, monkeypatch
                 "completion_tokens": 100, "call_type": "turno", "created_at": "2026-10-05T14:00:00+00:00"},
                {"business_id": BIZ, "estimated_cost_usd": 0.02, "prompt_tokens": 1000, "cached_tokens": 200,
                 "completion_tokens": 100, "call_type": "re_llamada_anti_alucinacion", "created_at": "2026-10-06T14:00:00+00:00"},
-               {"business_id": BIZ, "estimated_cost_usd": 0.01, "created_at": "2026-10-07T14:00:00+00:00"})  # fila anterior a la migracion
+               {"business_id": BIZ, "estimated_cost_usd": 0.01, "created_at": "2026-10-07T14:00:00+00:00"},  # fila anterior a la migracion
+               # T4.1: respuestas sin modelo; no cuentan como llamadas ni mueven los promedios.
+               {"business_id": BIZ, "estimated_cost_usd": 0, "prompt_tokens": 0, "call_type": "sin_modelo_faq_horario",
+                "created_at": "2026-10-07T15:00:00+00:00"},
+               {"business_id": BIZ, "estimated_cost_usd": 0, "prompt_tokens": 0, "call_type": "sin_modelo_saludo",
+                "created_at": "2026-10-07T16:00:00+00:00"})
     t = metrics.metricas_negocio(BIZ, date(2026, 10, 1), date(2026, 10, 15))["ia"]["tokens"]
     assert t == {
         "llamadas": 3, "entrada": 2000, "cacheados": 800, "salida": 200, "porcentaje_cache": 40.0,
-        "re_llamadas_anti_alucinacion": 1, "llamadas_por_conversacion": 1.5,
+        "re_llamadas_anti_alucinacion": 1, "respuestas_sin_modelo": 2, "llamadas_por_conversacion": 1.5,
         "tokens_entrada_por_conversacion": 1000, "costo_por_conversacion_usd": 0.025,
     }
 

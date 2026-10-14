@@ -106,7 +106,7 @@ Detiene la hemorragia y fija la línea base.
 1. **Fase 0 completa** (cualquier ahorro posterior se mide contra esta línea).
 2. Fase 1 (reordenar prompt + historial + salidas compactas).
 3. Conjunto de evaluación → Fase 2.
-4. Fase 3 y Fase 4.
+4. Fase 3 y Fase 4 (hecho en código; falta evaluación en vivo).
 5. **Antes de migrar a Seenode:** Fases 0 y 1 como mínimo (el costo variable es el principal riesgo operativo de producción).
 
 ## 8. Estado de implementación
@@ -124,7 +124,9 @@ Detiene la hemorragia y fija la línea base.
 | T2.3 Herramientas compactas | Código listo y probado, detrás de `CHAT_TOOLS_VERSION=v2` (apagado). ~2.85 k → ~1.5 k tokens (**−48 %**) | Evaluación en vivo antes de activarlo |
 | T3.1 Menos llamadas | Código listo y probado, detrás de `CHAT_FLUJOS_DETERMINISTAS` (apagado): saludo sin modelo, resumen de confirmación sin llamada de relevo y consulta de servicios en la primera llamada | Evaluación en vivo y medir llamadas por conversación (meta −30 %) |
 | T3.2 Enrutamiento de modelo | Código listo y probado, detrás de `CHAT_ENRUTAMIENTO=relay` + `CHAT_MODEL_NAME_SIMPLE` (apagado) | Evaluar modelos baratos con T2.1 antes de elegir uno |
-| Fase 4 | Sin empezar | — |
+| T4.1 FAQ sin modelo | Código listo y probado, detrás de `CHAT_FLUJOS_DETERMINISTAS=faq` (apagado): horario (en 12 h, con almuerzo) y servicios/precios se responden en código con datos reales, en cualquier punto de la conversación. Cada respuesta deja una fila de 0 tokens (`call_type=sin_modelo_*`) | Evaluación en vivo; medir `ia.tokens.respuestas_sin_modelo` |
+| T4.2 Caché de aplicación | **Descartada a propósito** | Las respuestas ya se arman en código leyendo la base (milisegundos, 0 tokens); una caché añadiría riesgo de datos viejos sin ahorrar tokens. Reabrir solo si la base se vuelve el cuello de botella |
+| T4.3 Gobierno | Parcial: presupuestos de tokens de prompt/herramientas como regresión en CI (Fase 2) y KPI `respuestas_sin_modelo` + costo por cita/conversación en el Centro de métricas | Alertas y paneles en Grafana (backlog de observabilidad) y revisión mensual |
 
 ### Notas de la implementación
 

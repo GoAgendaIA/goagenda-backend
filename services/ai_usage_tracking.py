@@ -35,6 +35,8 @@ def calcular_costo(prompt_tokens: int, completion_tokens: int, cached_tokens: in
     reporta OpenAI); de ahi, cached_tokens se cobran a la tarifa de cache y el
     resto a la tarifa normal.
     """
+    if prompt_tokens <= 0 and completion_tokens <= 0:
+        return 0.0  # respuesta sin modelo: nada que cobrar ni precio que buscar
     precio_entrada, precio_cache, precio_salida = _precios(modelo)
     cacheados = max(0, min(cached_tokens, prompt_tokens))
     costo_entrada = ((prompt_tokens - cacheados) / 1_000_000) * precio_entrada
