@@ -1,5 +1,5 @@
 [run]
-source = agent, services, routes, core, main
+source = agent, services, routes, core, main, evaluacion
 omit =
     tests/*
     venv/*
