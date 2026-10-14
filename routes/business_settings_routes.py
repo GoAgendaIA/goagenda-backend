@@ -32,6 +32,63 @@ def update_business_info(data: BusinessInfoUpdate, user_id: str = Depends(obtene
     return {"business": response.data[0]}
 
 
+DIRECCION_MAX_CARACTERES = 300
+TIPOS_DE_DIRECCION = ("formal", "referencias")
+
+
+class BusinessAddressUpdate(BaseModel):
+    business_id: str
+    address: str
+    address_kind: str = "formal"
+    address_city: str | None = None
+    address_notes: str | None = None
+    address_lat: float | None = None
+    address_lng: float | None = None
+
+
+def _texto_opcional(valor: str | None, maximo: int, campo: str) -> str | None:
+    limpio = (valor or "").strip()
+    if len(limpio) > maximo:
+        raise HTTPException(status_code=400, detail=f"{campo} no puede pasar de {maximo} caracteres")
+    return limpio or None
+
+
+@router.put("/business-settings/address")
+def update_business_address(data: BusinessAddressUpdate, user_id: str = Depends(obtener_usuario_actual)):
+    """
+    Guarda la direccion del negocio. Es texto libre a proposito: solo se exige que
+    no este vacia. Se acepta con nomenclatura ("Calle 10 # 5-20 local 3") o por
+    referencias ("Vereda La Cita, despues del puente"), sin validar contra ningun
+    mapa; las coordenadas del pin son opcionales y van en pareja.
+    """
+    verificar_dueno(data.business_id, user_id)
+
+    direccion = (data.address or "").strip()
+    if not direccion:
+        raise HTTPException(status_code=400, detail="La direccion del negocio es obligatoria")
+    if len(direccion) > DIRECCION_MAX_CARACTERES:
+        raise HTTPException(status_code=400, detail=f"La direccion no puede pasar de {DIRECCION_MAX_CARACTERES} caracteres")
+    if data.address_kind not in TIPOS_DE_DIRECCION:
+        raise HTTPException(status_code=400, detail="El tipo de direccion debe ser 'formal' o 'referencias'")
+    if (data.address_lat is None) != (data.address_lng is None):
+        raise HTTPException(status_code=400, detail="La ubicacion del mapa necesita latitud y longitud juntas")
+    if data.address_lat is not None and not (-90 <= data.address_lat <= 90 and -180 <= data.address_lng <= 180):
+        raise HTTPException(status_code=400, detail="La ubicacion del mapa esta fuera de rango")
+
+    campos = {
+        "address": direccion,
+        "address_kind": data.address_kind,
+        "address_city": _texto_opcional(data.address_city, 120, "El municipio o barrio"),
+        "address_notes": _texto_opcional(data.address_notes, DIRECCION_MAX_CARACTERES, "Las indicaciones"),
+        "address_lat": data.address_lat,
+        "address_lng": data.address_lng,
+    }
+    response = supabase.table("businesses").update(campos).eq("id", data.business_id).execute()
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Negocio no encontrado")
+    return {"business": response.data[0]}
+
+
 class FcmTokenUpdate(BaseModel):
     business_id: str
     fcm_token: str
@@ -119,8 +176,8 @@ def complete_onboarding(data: OnboardingCompleteInput, user_id: str = Depends(ob
     Activa el negocio al terminar el onboarding: habilita el chat publico y
     desbloquea el resto del panel. Valida server-side (no confia solo en el
     estado del wizard en el frontend) que ya haya al menos un servicio
-    activo y al menos un dia de horario activo, igual que exigen los pasos
-    3 y 4 del wizard.
+    activo, al menos un dia de horario activo y la direccion del negocio,
+    igual que exigen los pasos del wizard.
     """
     verificar_dueno(data.business_id, user_id)
 
@@ -145,6 +202,10 @@ def complete_onboarding(data: OnboardingCompleteInput, user_id: str = Depends(ob
     )
     if not tiene_horario.data:
         raise HTTPException(status_code=400, detail="Falta activar al menos un dia de horario antes de activar el negocio")
+
+    negocio = supabase.table("businesses").select("*").eq("id", data.business_id).execute()
+    if negocio.data and not str(negocio.data[0].get("address") or "").strip():
+        raise HTTPException(status_code=400, detail="Falta la direccion del negocio antes de activarlo")
 
     response = (
         supabase.table("businesses")

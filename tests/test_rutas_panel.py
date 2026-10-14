@@ -102,7 +102,68 @@ def test_completar_onboarding_exige_servicio_y_horario(cliente, como, negocio, d
     db.sembrar("services", {"business_id": BIZ, "active": True})
     assert "horario" in cliente.post(url, json=cuerpo, headers=como("dueno")).json()["detail"]
     db.sembrar("business_hours", {"business_id": BIZ, "day": "mon", "is_open": True})
+    assert "direccion" in cliente.post(url, json=cuerpo, headers=como("dueno")).json()["detail"]
+    db.tablas["businesses"][0]["address"] = "   "  # solo espacios: sigue sin direccion
+    assert cliente.post(url, json=cuerpo, headers=como("dueno")).status_code == 400
+    db.tablas["businesses"][0]["address"] = "Vereda La Cita, despues del puente, casa amarilla"
     assert cliente.post(url, json=cuerpo, headers=como("dueno")).json()["business"]["onboarding_completed"] is True
+
+
+# --- Direccion del negocio --------------------------------------------------------------------------------
+
+URL_DIRECCION = "/business-settings/address"
+
+
+@pytest.mark.parametrize("direccion, tipo", [
+    ("Calle 10 # 5-20, local 3, Centro Comercial El Parque", "formal"),
+    ("Vereda La Cita, despues del puente, casa amarilla", "referencias"),
+    ("Finca El Mirador km 4 via al rio", "referencias"),
+    ("Cra 7 sin numero, junto a la iglesia", "formal"),
+])
+def test_la_direccion_se_acepta_como_texto_libre(cliente, como, negocio, direccion, tipo):
+    r = cliente.put(URL_DIRECCION, json={"business_id": BIZ, "address": f"  {direccion}  ", "address_kind": tipo},
+                    headers=como("dueno"))
+    assert r.status_code == 200
+    negocio_guardado = r.json()["business"]
+    assert negocio_guardado["address"] == direccion and negocio_guardado["address_kind"] == tipo
+    assert negocio_guardado["address_lat"] is None and negocio_guardado["address_lng"] is None
+
+
+def test_la_direccion_guarda_ciudad_indicaciones_y_pin(cliente, como, negocio):
+    r = cliente.put(URL_DIRECCION, json={
+        "business_id": BIZ, "address": "Calle 5 #10-20", "address_city": " Medellin ", "address_notes": "Segundo piso",
+        "address_lat": 6.2442, "address_lng": -75.5812}, headers=como("dueno"))
+    b = r.json()["business"]
+    assert (b["address_city"], b["address_notes"], b["address_lat"], b["address_lng"]) == ("Medellin", "Segundo piso", 6.2442, -75.5812)
+    # Campos opcionales vacios quedan en null, no como cadena vacia.
+    r = cliente.put(URL_DIRECCION, json={"business_id": BIZ, "address": "Calle 5", "address_city": "  ", "address_notes": ""},
+                    headers=como("dueno"))
+    assert r.json()["business"]["address_city"] is None and r.json()["business"]["address_notes"] is None
+
+
+@pytest.mark.parametrize("cuerpo, fragmento", [
+    ({"address": ""}, "obligatoria"),
+    ({"address": "    "}, "obligatoria"),
+    ({"address": "x" * 301}, "300"),
+    ({"address": "Calle 1", "address_kind": "mapa"}, "tipo"),
+    ({"address": "Calle 1", "address_lat": 6.2}, "juntas"),
+    ({"address": "Calle 1", "address_lng": -75.5}, "juntas"),
+    ({"address": "Calle 1", "address_lat": 95, "address_lng": 10}, "rango"),
+    ({"address": "Calle 1", "address_lat": 10, "address_lng": 200}, "rango"),
+    ({"address": "Calle 1", "address_city": "c" * 121}, "120"),
+])
+def test_direccion_invalida(cliente, como, negocio, cuerpo, fragmento):
+    r = cliente.put(URL_DIRECCION, json={"business_id": BIZ, **cuerpo}, headers=como("dueno"))
+    assert r.status_code == 400 and fragmento in r.json()["detail"]
+
+
+def test_direccion_solo_la_cambia_el_dueno_y_el_negocio_debe_existir(cliente, como, negocio, monkeypatch):
+    from routes import business_settings_routes as bs
+
+    cuerpo = {"business_id": BIZ, "address": "Calle 1"}
+    assert cliente.put(URL_DIRECCION, json=cuerpo, headers=como("empleado")).status_code == 403
+    monkeypatch.setattr(bs, "verificar_dueno", lambda b, u: None)
+    assert cliente.put(URL_DIRECCION, json={**cuerpo, "business_id": "fantasma"}, headers=como("dueno")).status_code == 404
 
 
 @pytest.mark.parametrize("ruta, cuerpo", [
