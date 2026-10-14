@@ -56,3 +56,8 @@ LLM_MAX_TOKENS_SALIDA = _entero_env("LLM_MAX_TOKENS_SALIDA", 600)
 # el presupuesto por defecto es de US$5 y activarlo sin medir antes podria
 # dejar sin bot a un negocio real. Activar despues de fijar la linea base (T0.1).
 AI_PRESUPUESTO_CORTE_DURO = (os.getenv("AI_PRESUPUESTO_CORTE_DURO") or "").strip().lower() in ("1", "true", "yes", "si")
+
+# Cuantos turnos del cliente (mensajes humanos) se envian al modelo. El historial
+# completo sigue guardado: esto solo acota lo que viaja en cada llamada, cuyo
+# costo crecia con la longitud de la conversacion (T1.2).
+CHAT_HISTORIAL_MAX_TURNOS = _entero_env("CHAT_HISTORIAL_MAX_TURNOS", 12)

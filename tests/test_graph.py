@@ -320,3 +320,84 @@ def test_obtener_historial_sin_botones_si_el_ultimo_es_del_cliente(negocio):
 
 def test_thread_aislado_por_negocio():
     assert g._thread_config("a", "s")["configurable"]["thread_id"] != g._thread_config("b", "s")["configurable"]["thread_id"]
+
+
+# --- T1.2: historial acotado y resultados obsoletos ---------------------------------------------------------
+
+def _consulta(nombre, texto, cid):
+    return [
+        AIMessage(content="", tool_calls=[{"name": nombre, "args": {}, "id": cid}]),
+        ToolMessage(content=texto, name=nombre, tool_call_id=cid),
+    ]
+
+
+def test_resultado_de_consulta_superado_se_reemplaza_por_un_marcador():
+    historial = [
+        HumanMessage(content="el sabado"), *_consulta("consultar_horas_disponibles", "VIEJO", "c1"),
+        AIMessage(content="9:00 am o 10:00 am"),
+        HumanMessage(content="mejor el domingo"), *_consulta("consultar_horas_disponibles", "NUEVO", "c2"),
+        *_consulta("consultar_servicios_disponibles", "SERVICIOS", "c3"),
+    ]
+    resultado = g._compactar_resultados_obsoletos(historial)
+    contenidos = [m.content for m in resultado if isinstance(m, ToolMessage)]
+    assert contenidos == [g._RESULTADO_OBSOLETO, "NUEVO", "SERVICIOS"]
+    # No toca el original: el historial guardado y el que ve el cliente siguen completos.
+    assert [m.content for m in historial if isinstance(m, ToolMessage)] == ["VIEJO", "NUEVO", "SERVICIOS"]
+
+
+def test_el_ultimo_resultado_de_cada_consulta_se_conserva_aunque_sea_de_un_turno_anterior():
+    """El cliente elige la hora en el turno siguiente: el modelo aun necesita las equivalencias am/pm."""
+    historial = [HumanMessage(content="el sabado"), *_consulta("consultar_horas_disponibles", "HORAS", "c1"),
+                 AIMessage(content="9:00 am o 10:00 am"), HumanMessage(content="a las 10")]
+    resultado = g._compactar_resultados_obsoletos(historial)
+    assert [m.content for m in resultado if isinstance(m, ToolMessage)] == ["HORAS"]
+
+
+def test_tools_sin_nombre_o_de_accion_no_se_compactan():
+    historial = [
+        ToolMessage(content="sin nombre", tool_call_id="a"),
+        ToolMessage(content="reservado 1", name="crear_cita", tool_call_id="b"),
+        ToolMessage(content="reservado 2", name="crear_cita", tool_call_id="c"),
+    ]
+    assert [m.content for m in g._compactar_resultados_obsoletos(historial)] == ["sin nombre", "reservado 1", "reservado 2"]
+
+
+def test_ventana_de_turnos_corta_en_un_mensaje_humano_y_avisa():
+    historial = []
+    for n in range(1, 8):
+        historial += [HumanMessage(content=f"turno {n}"), *_consulta("crear_cita", f"r{n}", f"c{n}"), AIMessage(content=f"ok {n}")]
+    recortado = g._limitar_turnos(historial, 3)
+    assert recortado[0].type == "system" and "omitieron" in recortado[0].content
+    assert recortado[1].content == "turno 5"
+    assert [m.content for m in recortado if m.type == "human"] == ["turno 5", "turno 6", "turno 7"]
+    # Ningun ToolMessage queda huerfano: cada uno va tras el AIMessage que lo pidio.
+    ids_pedidos = {tc["id"] for m in recortado if isinstance(m, AIMessage) for tc in m.tool_calls}
+    assert {m.tool_call_id for m in recortado if isinstance(m, ToolMessage)} <= ids_pedidos
+
+
+def test_ventana_no_hace_nada_si_la_conversacion_es_corta_o_esta_desactivada():
+    historial = [HumanMessage(content="a"), AIMessage(content="b"), HumanMessage(content="c")]
+    assert g._limitar_turnos(historial, 12) is historial
+    assert g._limitar_turnos(historial, 0) is historial
+
+
+def test_el_costo_de_una_conversacion_larga_ya_no_crece_sin_limite(monkeypatch):
+    monkeypatch.setattr(g, "CHAT_HISTORIAL_MAX_TURNOS", 12)
+    historial = []
+    for n in range(60):
+        historial += [HumanMessage(content=f"mensaje {n}"), AIMessage(content=f"respuesta {n}")]
+    enviados = g._preparar_historial_para_modelo(historial)
+    assert len([m for m in enviados if m.type == "human"]) == 12 and len(enviados) < 30
+
+
+def test_el_nodo_del_agente_envia_el_historial_preparado(negocio, monkeypatch):
+    monkeypatch.setattr(g, "CHAT_HISTORIAL_MAX_TURNOS", 2)
+    modelo = ModeloGuionado(AIMessage(content="ok"))
+    monkeypatch.setattr(g, "_model", modelo)
+    mensajes = []
+    for n in range(5):
+        mensajes += [HumanMessage(content=f"m{n}"), AIMessage(content=f"r{n}")]
+    mensajes.append(HumanMessage(content="ultimo"))
+    g._agent_node({"messages": mensajes, "business_id": BIZ, "client_phone": None, "employee_id": None})
+    enviado = modelo.llamadas[0]
+    assert enviado[0].type == "system" and [m.content for m in enviado if m.type == "human"] == ["m4", "ultimo"]

@@ -16,6 +16,7 @@ from agent.tools import _normalizar, TOOLS
 from core.settings import (
     CHAT_MODEL_NAME,
     DATABASE_URL,
+    CHAT_HISTORIAL_MAX_TURNOS,
     DB_POOL_MAX_SIZE,
     LLM_MAX_TOKENS_SALIDA,
     DB_POOL_MIN_SIZE,
@@ -197,6 +198,58 @@ def _historial_valido_para_modelo(messages: list) -> list:
     return resultado
 
 
+# Resultados de consulta que quedan "viejos" en cuanto se vuelve a consultar lo
+# mismo (horas libres, empleados, servicios, zonas). Solo el mas reciente de cada
+# tipo le sirve al modelo; los anteriores se reenviaban completos en cada llamada.
+_TOOLS_CON_RESULTADO_OBSOLESCIBLE = {
+    "consultar_horas_disponibles",
+    "consultar_empleados_disponibles",
+    "consultar_servicios_disponibles",
+    "consultar_zonas_domicilio",
+}
+_RESULTADO_OBSOLETO = "(resultado anterior omitido: mas abajo en esta conversacion hay una consulta mas reciente)"
+_AVISO_HISTORIAL_RECORTADO = (
+    "(Los mensajes mas antiguos de esta conversacion se omitieron por brevedad. Los datos vigentes estan en el "
+    "ESTADO ACTUAL del final de las instrucciones; si te falta algun dato del cliente, como su nombre, pideselo.)"
+)
+
+
+def _compactar_resultados_obsoletos(mensajes: list) -> list:
+    """Reemplaza por un marcador los ToolMessage de consulta que ya fueron superados por uno mas reciente."""
+    ultimo_por_tool: dict[str, int] = {}
+    for i, m in enumerate(mensajes):
+        if isinstance(m, ToolMessage) and m.name in _TOOLS_CON_RESULTADO_OBSOLESCIBLE:
+            ultimo_por_tool[m.name] = i
+
+    resultado = []
+    for i, m in enumerate(mensajes):
+        if isinstance(m, ToolMessage) and m.name in ultimo_por_tool and ultimo_por_tool[m.name] != i:
+            m = m.model_copy(update={"content": _RESULTADO_OBSOLETO})
+        resultado.append(m)
+    return resultado
+
+
+def _limitar_turnos(mensajes: list, max_turnos: int) -> list:
+    """
+    Conserva solo los ultimos max_turnos turnos del cliente. Siempre corta en un
+    mensaje HUMANO: asi nunca queda un ToolMessage sin el AIMessage que lo pidio
+    (la API de OpenAI rechazaria ese historial).
+    """
+    if max_turnos <= 0:
+        return mensajes
+    inicios = [i for i, m in enumerate(mensajes) if isinstance(m, HumanMessage)]
+    if len(inicios) <= max_turnos:
+        return mensajes
+    return [SystemMessage(content=_AVISO_HISTORIAL_RECORTADO)] + mensajes[inicios[-max_turnos]:]
+
+
+def _preparar_historial_para_modelo(mensajes: list) -> list:
+    """Historial que realmente viaja al modelo: valido, sin resultados obsoletos y acotado en turnos."""
+    return _limitar_turnos(
+        _compactar_resultados_obsoletos(_historial_valido_para_modelo(mensajes)), CHAT_HISTORIAL_MAX_TURNOS
+    )
+
+
 def _agent_node(state: AgentState) -> dict:
     if state.get("transferido"):
         return {"messages": [AIMessage(content=MENSAJE_TRANSFERIDO)]}
@@ -231,7 +284,7 @@ def _agent_node(state: AgentState) -> dict:
         catalogo=catalogo,
     )
 
-    entrada = [SystemMessage(content=system)] + _historial_valido_para_modelo(state["messages"])
+    entrada = [SystemMessage(content=system)] + _preparar_historial_para_modelo(state["messages"])
 
     response = _invocar_modelo(_model, entrada, state["business_id"], session_id=state.get("session_id"))
     if response is None:
