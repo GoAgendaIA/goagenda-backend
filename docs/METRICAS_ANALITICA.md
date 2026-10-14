@@ -99,6 +99,8 @@ Los negocios bloqueados no generan alertas.
   SQL o una función RPC en Postgres.
 - **Citas completadas:** el backend no tiene un endpoint para marcarlas; dependen de que el panel
   actualice el estado. Si nadie lo hace, «completadas» y la tasa de cancelación subestiman la realidad.
+- **Ingresos estimados:** no dependen de ese estado. Una cita no cancelada cuya hora ya pasó cuenta como
+  ingreso *completado*; una futura (confirmada, pendiente o con pago pendiente) cuenta como *por realizar*.
 - **Cancelaciones del panel:** quedan con `cancelled_by = NULL` (se asume del negocio).
 - **Exportación CSV/Excel:** el PDF la marca como mejora posterior; no está implementada.
 - **El gráfico es del front:** este repo entrega solo el contrato de datos.
