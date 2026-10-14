@@ -65,7 +65,7 @@ INVARIANTES_SIEMPRE = [
     "negocio_abierto_ese_dia", "ya paso", "Servicio 0",
     # flujo
     "seleccionar_servicio", "registrar_telefono_cliente", "cedula", "equivalencias_am_pm_a_24h",
-    "muestra_para_mostrar", "horas_disponibles", "pedir_confirmacion_cita", "crear_cita", "reprogramar_cita",
+    "horas_por_franja", "horas_disponibles", "pedir_confirmacion_cita", "crear_cita", "reprogramar_cita",
     "consultar_citas_cliente", "requiere_confirmacion_por_pago", "confirmar_a_pesar_del_pago", "cancelar_cita",
     "transferir_a_equipo", "escalar_por_confusion", "appointment_id", "12:30 am",
     # formato

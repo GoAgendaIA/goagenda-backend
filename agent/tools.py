@@ -49,12 +49,20 @@ def _formato_hora_12h(hora_24: str) -> str:
     return datetime.strptime(hora_24, "%H:%M").strftime("%I:%M %p").lstrip("0").lower()
 
 
-def _muestra_repartida(items: list[str], n: int) -> list[str]:
-    """Hasta n elementos de la lista repartidos parejo (incluye el primero y el ultimo)."""
-    if len(items) <= n:
-        return list(items)
-    pasos = n - 1
-    return [items[round(i * (len(items) - 1) / pasos)] for i in range(n)]
+def _horas_por_franja(horas_24: list[str]) -> str:
+    """
+    Todas las horas libres agrupadas en 'Mañana' (antes de las 12:00) y 'Tarde'
+    (desde las 12:00), en 12 h, ya listas para mostrarle al cliente tal cual.
+    La arma el codigo y no el modelo: asi no omite, inventa ni reordena horas.
+    """
+    manana = [_formato_hora_12h(h) for h in horas_24 if h < "12:00"]
+    tarde = [_formato_hora_12h(h) for h in horas_24 if h >= "12:00"]
+    lineas = []
+    if manana:
+        lineas.append("🌅 *Mañana:* " + ", ".join(manana))
+    if tarde:
+        lineas.append("🌇 *Tarde:* " + ", ".join(tarde))
+    return "\n".join(lineas)
 
 
 def _domicilios_activos(business_id: str) -> bool:
@@ -743,10 +751,9 @@ def consultar_horas_disponibles(
         # Equivalencia am/pm -> 24h de CADA hora libre: evita que el modelo tenga que
         # convertir "12:30 am" (00:30) y la confunda con 12:30 (mediodia, almuerzo).
         "equivalencias_am_pm_a_24h": {_formato_hora_12h(h): h for h in horas_libres},
-        # Muestra ya armada (5 horas REALES repartidas a lo largo del dia) que el modelo
-        # debe mostrar tal cual: cuando la armaba el, llegaba a inventar rangos (ej. 9-11 am)
-        # que no correspondian a la disponibilidad real.
-        "muestra_para_mostrar": [_formato_hora_12h(h) for h in _muestra_repartida(horas_libres, 5)],
+        # TODAS las horas libres ya agrupadas en Mañana/Tarde: el modelo las muestra
+        # tal cual (las arma el codigo, para que no omita ni invente ninguna).
+        "horas_por_franja": _horas_por_franja(horas_libres),
         # La IA necesita esto para poder explicarle al cliente POR QUE no hay
         # horas (el empleado no trabaja ese dia vs. simplemente todo ocupado),
         # en vez de adivinar o saltar de dia en silencio.
@@ -757,9 +764,8 @@ def consultar_horas_disponibles(
     return Command(
         update={
             # Opciones de seleccion rapida: el cliente toca la hora en vez de
-            # escribirla. Se ofrecen todas las horas libres (el texto del
-            # mensaje puede curar una sublista mas corta, pero los botones
-            # dan la disponibilidad real completa).
+            # escribirla. Se ofrecen todas las horas libres, las mismas que
+            # lista el texto del mensaje.
             "ultimas_opciones": [
                 {"label": _formato_hora_12h(h), "value": _formato_hora_12h(h)} for h in horas_libres
             ],
