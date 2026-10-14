@@ -100,3 +100,79 @@ def test_pool_configurable_por_entorno(monkeypatch):
         monkeypatch.undo()
         importlib.reload(settings)
     assert settings.DB_POOL_MAX_SIZE == 4
+
+
+# --- orden del prompt para la cache de OpenAI (T1.1) --------------------------------------------------------
+
+def test_lo_que_cambia_en_cada_llamada_va_al_final_del_prompt():
+    """
+    OpenAI cachea el PREFIJO identico entre llamadas. Todo lo que cambia
+    (fecha, telefono, empleado, servicio, escalamiento) debe ir despues de las
+    reglas estables, o el descuento de tokens cacheados no se aplica.
+    """
+    base = dict(business={"id": "b", "name": "Barberia X", "business_type": "barberia"}, horario_texto="lunes: 09:00 a 19:00",
+                empleados=[{"id": "e1", "name": "Chenier", "servicios": ["Corte"]}], employee_fijo=False,
+                catalogo=[{"id": "s1", "name": "Corte", "duration_minutes": 30, "price": 15000}])
+
+    def armar(**cambios):
+        datos = {**base, "fecha_actual": "2026-10-13 10:00 (Tuesday)", "client_phone": None,
+                 "employee_id_actual": None, "service_id_actual": None, "escalado": False, **cambios}
+        return build_system_prompt(
+            datos["business"], datos["horario_texto"], datos["fecha_actual"], datos["client_phone"], datos["empleados"],
+            datos["employee_id_actual"], datos["employee_fijo"], datos["service_id_actual"], datos["escalado"], catalogo=datos["catalogo"],
+        )
+
+    inicial = armar()
+    despues = armar(fecha_actual="2026-10-13 11:00 (Tuesday)", client_phone="573001234567", employee_id_actual="e1",
+                    service_id_actual="s1", escalado=True)
+
+    # El prefijo comun es casi todo el prompt (reglas estables), no unas decenas de tokens.
+    comun = 0
+    for a, b in zip(inicial, despues):
+        if a != b:
+            break
+        comun += 1
+    assert comun / len(inicial) > 0.9
+    fin_de_reglas = inicial.index("REGLAS DE EXACTITUD")
+    assert inicial.index("\nHoy es ") > fin_de_reglas
+    assert inicial.rindex("ESTADO ACTUAL DE ESTA CONVERSACION") > fin_de_reglas
+    # Todo lo que va antes de los datos volatiles es identico entre llamadas (prefijo cacheable).
+    assert comun >= inicial.index("\nHoy es ")
+
+
+# --- T1.4: secciones condicionales -------------------------------------------------------------------------
+
+def _prompt_de(business_extra=None, catalogo=None):
+    negocio = {"id": "b", "name": "Barberia X", "business_type": "barberia", **(business_extra or {})}
+    return build_system_prompt(
+        negocio, "lunes: 09:00 a 19:00", "2026-10-13 10:00 (Tuesday)", None,
+        [{"id": "e1", "name": "Chenier", "servicios": ["Corte"]}], None, False, catalogo=catalogo or [{"name": "Corte"}],
+    )
+
+
+def test_negocio_simple_no_recibe_reglas_de_domicilios_ni_de_abonos():
+    simple = _prompt_de()
+    assert "DOMICILIOS:" not in simple and "REGLA CRITICA DE PAGOS" not in simple
+    assert "cambie de local a domicilio" not in simple
+    assert "\n\n\n" not in simple  # los bloques ausentes no dejan lineas vacias
+
+
+def test_domicilios_activos_incluye_sus_reglas():
+    prompt = _prompt_de({"home_visits_enabled": True})
+    assert "DOMICILIOS:" in prompt and "cambie de local a domicilio" in prompt
+    assert "REGLA CRITICA DE PAGOS" not in prompt
+
+
+def test_servicio_con_abono_incluye_las_reglas_de_pago():
+    prompt = _prompt_de(catalogo=[{"name": "Color", "requires_payment": True}])
+    assert "REGLA CRITICA DE PAGOS" in prompt and "link_pago" in prompt
+    assert "DOMICILIOS:" not in prompt
+
+
+def test_las_secciones_condicionales_ahorran_tokens():
+    simple = _prompt_de()
+    completo = _prompt_de({"home_visits_enabled": True}, catalogo=[{"name": "Color", "requires_payment": True}])
+    assert len(simple) < len(completo) * 0.9
+    # La regla de cancelacion con pago es corta y se mantiene siempre (una cita ya pagada puede
+    # existir aunque el servicio ya no este activo).
+    assert "requiere_confirmacion_por_pago" in simple

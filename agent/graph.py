@@ -206,7 +206,9 @@ def _agent_node(state: AgentState) -> dict:
         return {"messages": [AIMessage(content=MENSAJE_ERROR_TECNICO)]}
 
     horario_texto = _construir_horario_texto(state["business_id"])
-    fecha_actual = ahora_local().strftime("%Y-%m-%d %H:%M (%A)")
+    # Sin minutos: al ir en el prompt, un valor que cambia cada minuto invalida
+    # la cache de prefijo de OpenAI; la hora exacta la validan las tools.
+    fecha_actual = ahora_local().strftime("%Y-%m-%d %H:00 (%A)")
     empleados = [
         {
             "id": e["id"],
