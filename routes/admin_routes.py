@@ -292,3 +292,15 @@ def actualizar_presupuesto_ia(business_id: str, data: AiBudgetUpdate, user_id: s
 
     invalidar_cache_presupuesto(business_id)
     return {"business_id": business_id, "monthly_ai_budget_usd": response.data[0]["monthly_ai_budget_usd"]}
+
+
+@router.post("/chat-retention/run")
+def ejecutar_retencion_de_conversaciones(dry_run: bool = True, user_id: str = Depends(requiere_super_admin)):
+    """
+    Corre la limpieza de conversaciones vencidas a pedido (super admin). Por defecto es un
+    ENSAYO (dry_run=true): solo cuenta cuantas se eliminarian. Para borrar de verdad hay que
+    pasar dry_run=false explicitamente. El job diario hace lo mismo con el plazo configurado.
+    """
+    from services.retencion_conversaciones import limpiar_conversaciones_vencidas
+
+    return limpiar_conversaciones_vencidas(dry_run=dry_run)
