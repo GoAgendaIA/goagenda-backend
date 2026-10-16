@@ -169,7 +169,7 @@ en el log y la acción del cliente se completa igual.
   tiene todavía una acción para cancelar o mover una cita, así que no hay desde dónde
   disparar el aviso. Cuando exista, debe llamar a `enviar_cancelacion_cita_cliente` /
   `enviar_reprogramacion_cita_cliente`.
-- Las citas **cancelas automáticamente por pago vencido** (`cancelled_by=system`) no avisan
+- Las citas **canceladas automáticamente por pago vencido** (`cancelled_by=system`) no avisan
   al cliente por este medio.
 - Los negocios que ya existían no tienen dirección hasta que la llenen (Ajustes → General);
   mientras tanto el mensaje dice «Consulta la dirección con el negocio».

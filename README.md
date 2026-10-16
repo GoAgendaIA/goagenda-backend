@@ -194,6 +194,8 @@ Variables en orden: `nombre_cliente`, `nombre_negocio`, `nombre_servicio`, `fech
 
 Para probar el envio real sin tener que agendar una cita, usar `POST /test-whatsapp-confirmation?numero_whatsapp=<numero>` (protegido con header `x-api-key`, ver `main.py`) contra un numero real, una vez el template este `APPROVED`.
 
+**Plantillas v2 (confirmación, reprogramación, recordatorio y cancelación con fecha, hora, profesional y dirección):** textos, variables, cómo crearlas en Meta y cómo activarlas sin riesgo en [`docs/PLANTILLAS_WHATSAPP.md`](docs/PLANTILLAS_WHATSAPP.md). Quedan apagadas (`WHATSAPP_PLANTILLAS_VERSION=v1`) hasta que Meta las apruebe.
+
 ## Recordatorios de cita por WhatsApp (worker en segundo plano)
 
 `services/reminder_service.py:revisar_y_enviar_recordatorios` corre cada 5 minutos via `APScheduler` (registrado en `main.py`, junto al `BackgroundScheduler`). Por cada negocio, busca citas `confirmed` con `reminder_sent = false` cuyo `scheduled_at` cae dentro de la ventana `reminder_hours_before` (configurable por negocio, ver `PUT /business-settings/reminder`), y le manda el recordatorio al `client_phone` de la cita, desde el numero propio del negocio (`businesses.whatsapp_phone_number_id`) via Meta, o por Baileys si el negocio no tiene numero de Meta conectado.
