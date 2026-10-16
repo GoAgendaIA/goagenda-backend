@@ -37,6 +37,7 @@ from core.settings import (
     CHAT_TOOLS_VERSION,
     DB_POOL_MAX_SIZE,
     LLM_MAX_TOKENS_SALIDA,
+    LLM_TIMEOUT_SEGUNDOS,
     DB_POOL_MIN_SIZE,
     DB_POOL_TIMEOUT,
     OPENAI_API_KEY,
@@ -119,6 +120,7 @@ _llm = ChatOpenAI(
     temperature=LLM_TEMPERATURE,
     max_retries=0,
     max_tokens=LLM_MAX_TOKENS_SALIDA,
+    timeout=LLM_TIMEOUT_SEGUNDOS,
 )
 _TOOLS_PARA_MODELO = esquemas_para_modelo(TOOLS, CHAT_TOOLS_VERSION)
 _model = _llm.bind_tools(_TOOLS_PARA_MODELO)
@@ -138,6 +140,7 @@ if CHAT_MODEL_NAME_SIMPLE:
         temperature=LLM_TEMPERATURE,
         max_retries=0,
         max_tokens=LLM_MAX_TOKENS_SALIDA,
+        timeout=LLM_TIMEOUT_SEGUNDOS,
     ).bind_tools(_TOOLS_PARA_MODELO)
 
 _PATRON_PRECIO = re.compile(r"\$\s?(\d{1,3}(?:[.,]\d{3})+|\d+)")

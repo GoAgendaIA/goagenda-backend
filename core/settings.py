@@ -52,6 +52,12 @@ CHAT_LIMITE_IP_POR_MINUTO = _entero_env("CHAT_LIMITE_IP_POR_MINUTO", 40)
 CHAT_LIMITE_SESION_POR_HORA = _entero_env("CHAT_LIMITE_SESION_POR_HORA", 80)
 # Tope de tokens de la RESPUESTA del modelo (los argumentos de las tools tambien cuentan).
 LLM_MAX_TOKENS_SALIDA = _entero_env("LLM_MAX_TOKENS_SALIDA", 600)
+# Limite de tiempo de CADA llamada al modelo. Sin el, una llamada lenta de OpenAI esperaba
+# indefinidamente y el tunel de Cloudflare cortaba la peticion a los ~100 s (504): el cliente veia
+# "no se pudo enviar" y su turno quedaba sin respuesta. Con 25 s y los 3 intentos de
+# _invocar_modelo, el peor caso (~80 s) queda por debajo del corte y el cliente recibe al menos el
+# mensaje de error tecnico con el WhatsApp del negocio.
+LLM_TIMEOUT_SEGUNDOS = _entero_env("LLM_TIMEOUT_SEGUNDOS", 25)
 # Corte duro del presupuesto mensual de IA por negocio. Por defecto APAGADO:
 # el presupuesto por defecto es de US$5 y activarlo sin medir antes podria
 # dejar sin bot a un negocio real. Activar despues de fijar la linea base (T0.1).
