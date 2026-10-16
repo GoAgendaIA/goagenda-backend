@@ -18,7 +18,7 @@ def obtener_mi_sesion(user_id: str = Depends(obtener_usuario_actual)):
     """
     empleos = (
         supabase.table("employees")
-        .select("id, business_id, name, role, active, businesses(*)")
+        .select("*, businesses(*)")
         .eq("user_id", user_id)
         .execute()
     )
@@ -34,6 +34,9 @@ def obtener_mi_sesion(user_id: str = Depends(obtener_usuario_actual)):
                 "business_onboarding_completed": (e.get("businesses") or {}).get("onboarding_completed", True),
                 "business_onboarding_step": (e.get("businesses") or {}).get("onboarding_step", 1),
                 "business_home_visits_enabled": bool((e.get("businesses") or {}).get("home_visits_enabled", False)),
+                # True si ya vio el aviso de estadisticas. Sin la columna (estadisticas_intro.sql sin
+                # correr) se asume visto, para no mostrar un aviso que no se podria recordar.
+                "stats_intro_seen": bool(e.get("stats_intro_seen", True)),
                 "name": e.get("name"),
                 "role": e["role"],
                 "active": e["active"],
