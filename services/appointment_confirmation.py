@@ -21,6 +21,7 @@ from postgrest.exceptions import APIError
 
 from services.db import create_appointment, get_appointment_full, get_business_by_id, update_appointment_status
 from services.push_notifications import enviar_notificacion_nueva_cita
+from services.notificaciones_cliente import datos_para_plantilla, nombre_del_empleado
 from services.scheduling import formatear_fecha_natural
 from services.whatsapp import enviar_confirmacion_cita_cliente
 
@@ -80,6 +81,7 @@ def finalizar_creacion_cita(
             nombre_negocio=business.get("name", "el negocio") if business else "el negocio",
             nombre_servicio=service_name,
             fecha_hora_texto=formatear_fecha_natural(fecha_hora_dt),
+            datos_plantilla=datos_para_plantilla(business, fecha_hora_dt, nombre_del_empleado(employee_id)),
         )
     except Exception as e:
         print(f"No se pudo enviar la confirmacion de cita por WhatsApp al cliente: {e}")
@@ -180,6 +182,7 @@ def confirmar_cita_pendiente(appointment_id: str) -> dict | None:
             nombre_negocio=business.get("name", "el negocio") if business else "el negocio",
             nombre_servicio=nombre_servicio,
             fecha_hora_texto=formatear_fecha_natural(fecha_hora_dt),
+            datos_plantilla=datos_para_plantilla(business, fecha_hora_dt, nombre_del_empleado(cita.get("employee_id"))),
         )
     except Exception as e:
         print(f"No se pudo enviar la confirmacion de cita por WhatsApp al cliente: {e}")

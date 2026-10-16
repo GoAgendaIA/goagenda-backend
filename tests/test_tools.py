@@ -631,3 +631,44 @@ class TestSalidasCompactas:
         assert t._json_compacto({"a": [1, 2], "b": True, "n": "ñ"}) == '{"a":[1,2],"b":true,"n":"ñ"}'
         assert t._numero_limpio(15000.0) == 15000 and t._numero_limpio(15000.5) == 15000.5
         assert t._numero_limpio(None) is None and t._numero_limpio("abc") == "abc"
+
+
+class TestAvisosAlClientePorWhatsapp:
+    """Cancelar y reprogramar le avisan al cliente (plantillas v2); si el envio falla, la accion igual se completa."""
+
+    def test_cancelar_avisa_al_cliente_con_la_cita_cancelada(self, cita_existente, efectos_cita, monkeypatch):
+        from services import whatsapp as wa
+
+        enviado = MagicMock()
+        monkeypatch.setattr(wa, "enviar_cancelacion_cita_cliente", enviado)
+        r = t.cancelar_cita.func(cita_existente["id"], BIZ, "573001234567", "sess-1")
+
+        assert r["resultado"][0]["status"] == "cancelled"
+        kw = enviado.call_args.kwargs
+        assert (kw["client_phone"], kw["nombre_cliente"], kw["nombre_negocio"], kw["nombre_servicio"]) == (
+            "573001234567", "Ana", "Barberia", "Corte")
+        assert kw["datos_plantilla"]["fecha"] == "sábado 10 de octubre" and kw["datos_plantilla"]["hora"] == "10:00 am"
+        assert kw["datos_plantilla"]["enlace_agendamiento"].endswith(f"/chat/{BIZ}")
+
+    def test_reprogramar_avisa_la_fecha_nueva(self, cita_existente, efectos_cita, monkeypatch):
+        from services import whatsapp as wa
+
+        enviado = MagicMock()
+        monkeypatch.setattr(wa, "enviar_reprogramacion_cita_cliente", enviado)
+        _reprogramar(cita_existente["id"], nueva_fecha_hora=f"{SABADO}T11:00:00")
+
+        kw = enviado.call_args.kwargs
+        assert kw["client_phone"] == "573001234567" and kw["nombre_cliente"] == "Ana"
+        assert kw["datos_plantilla"]["fecha"] == "sábado 10 de octubre" and kw["datos_plantilla"]["hora"] == "11:00 am"
+
+    def test_si_whatsapp_falla_la_accion_se_completa(self, cita_existente, db, efectos_cita, monkeypatch, capsys):
+        from services import whatsapp as wa
+
+        def roto(**kwargs):
+            raise RuntimeError("Meta caido")
+
+        monkeypatch.setattr(wa, "enviar_cancelacion_cita_cliente", roto)
+        monkeypatch.setattr(wa, "enviar_reprogramacion_cita_cliente", roto)
+        assert "error" not in _reprogramar(cita_existente["id"], nueva_fecha_hora=f"{SABADO}T11:00:00")
+        assert t.cancelar_cita.func(cita_existente["id"], BIZ, "573001234567", "sess-1")["resultado"][0]["status"] == "cancelled"
+        assert "avisar la cancelacion" in capsys.readouterr().out

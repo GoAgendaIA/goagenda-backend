@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from services.db import supabase
+from services.notificaciones_cliente import datos_para_plantilla, nombre_del_empleado
 from services.whatsapp import enviar_recordatorio_cita_template
 from services.scheduling import ahora_local, formatear_fecha_natural
 
@@ -16,7 +17,7 @@ def revisar_y_enviar_recordatorios():
     print(f"[recordatorios] inicio ciclo ahora={ahora:%Y-%m-%d %H:%M}", flush=True)
 
     # Trae todos los negocios con su configuracion de recordatorio
-    negocios_response = supabase.table("businesses").select("id, name, reminder_hours_before").execute()
+    negocios_response = supabase.table("businesses").select("id, name, reminder_hours_before, address, address_city").execute()
     negocios = negocios_response.data
 
     total_enviados = 0
@@ -67,6 +68,7 @@ def revisar_y_enviar_recordatorios():
                     nombre_negocio=nombre_negocio,
                     nombre_servicio=nombre_servicio,
                     fecha_hora_texto=formatear_fecha_natural(fecha_cita),
+                    datos_plantilla=datos_para_plantilla(negocio, fecha_cita, nombre_del_empleado(cita.get("employee_id"))),
                 )
 
                 # Solo marcamos como enviado si WhatsApp confirmo el envio (sin campo "error")
