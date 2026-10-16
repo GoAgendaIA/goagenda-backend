@@ -1066,11 +1066,56 @@ def crear_cita(
     return {"cita_creada": [cita] if cita else []}
 
 
+# El cliente pidio ver, consultar, cancelar o mover una cita que YA tiene. Mensajes sueltos
+# como "turno", "cita" o "quiero una cita" son intencion de AGENDAR una nueva: no cuentan.
+_PATRON_PIDIO_SUS_CITAS = re.compile(
+    r"\b(?:cancel\w*|reprogram\w*|reagend\w*|mover|moverla|cambiar|cambio|consult\w*|"
+    r"mis? (?:cita|citas|turno|turnos|reserva|reservas|agenda)|"
+    r"(?:mi|la|las|esa|esas) (?:ultima|proxima|anterior|siguiente) (?:cita|reserva|turno)|"
+    r"(?:ultima|proxima|anterior) (?:cita|reserva|turno)|"
+    r"(?:tengo|tenia|tuve) (?:una |alguna |agendad\w+ |algun )?(?:cita|citas|turno|reserva)|"
+    r"ya tengo|agendada|reservada|"
+    r"cuando (?:es|fue|era|tengo)|a que hora (?:es|era|tengo|fue)|"
+    r"que citas|cuales citas|ver (?:mi|mis|la|las)|revisar (?:mi|mis|la|las)|"
+    r"la del|el del|esa cita|esa reserva)\b"
+)
+
+# Cuantos mensajes recientes del cliente se miran: a una pregunta del bot ("¿cual cita?")
+# el cliente suele responder sin repetir la palabra ("la del viernes").
+_MENSAJES_RECIENTES_A_REVISAR = 4
+
+MENSAJE_NO_PIDIO_SUS_CITAS = (
+    "El cliente NO ha pedido ver, consultar, cancelar ni mover una cita que ya tiene. No menciones citas anteriores "
+    "ni sus fechas u horas. Si escribio algo suelto como \"turno\" o \"cita\", asume que quiere AGENDAR una nueva: "
+    "preguntale para que dia o con que servicio. Si de verdad no queda claro, preguntale: \"¿Quieres agendar una "
+    "nueva cita o consultar una que ya tienes?\""
+)
+
+
+def _cliente_pidio_sus_citas(mensajes: list | None) -> bool:
+    """
+    True si en los ultimos mensajes del cliente hay una peticion explicita sobre una cita
+    que ya tiene. `mensajes=None` (la tool llamada sin estado) no bloquea nada.
+    """
+    if mensajes is None:
+        return True
+    humanos = [str(m.content) for m in mensajes if getattr(m, "type", None) == "human"]
+    texto = _normalizar(" ".join(humanos[-_MENSAJES_RECIENTES_A_REVISAR:]))
+    return bool(_PATRON_PIDIO_SUS_CITAS.search(texto))
+
+
 @tool
-def consultar_citas_cliente(business_id: BusinessId, client_phone: ClientPhone) -> dict:
-    """Consulta las citas confirmadas del cliente actual."""
+def consultar_citas_cliente(
+    business_id: BusinessId,
+    client_phone: ClientPhone,
+    mensajes: Annotated[list, InjectedState("messages")] = None,
+) -> dict:
+    """Consulta las citas confirmadas del cliente actual. Solo cuando el cliente pide ver, cancelar o mover una cita que ya tiene."""
     if not client_phone:
         return {"error": "Necesito el numero de WhatsApp del cliente para buscar sus citas. Pidelo y usa registrar_telefono_cliente."}
+    if not _cliente_pidio_sus_citas(mensajes):
+        # Privacidad: sin una peticion explicita no se leen ni se mencionan citas anteriores.
+        return {"citas_no_consultadas": True, "instruccion": MENSAJE_NO_PIDIO_SUS_CITAS}
     return {"citas": get_client_appointments(business_id, client_phone)}
 
 
