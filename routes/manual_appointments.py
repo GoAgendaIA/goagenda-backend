@@ -2,11 +2,20 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from datetime import datetime
 
-from services.db import get_home_visit_zones, get_services, create_appointment, get_business_by_id, get_employee_by_id, supabase
+from services.db import (
+    create_appointment,
+    get_appointment_full,
+    get_business_by_id,
+    get_employee_by_id,
+    get_home_visit_zones,
+    get_services,
+    supabase,
+    update_appointment_status,
+)
 from services.scheduling import es_hora_valida, hay_choque_de_horario, formatear_fecha_natural, generar_horas_disponibles
 from services.auth import obtener_usuario_actual, verificar_acceso_empleado, verificar_dueno
 from services.notificaciones_cliente import datos_para_plantilla, nombre_del_empleado
-from services.whatsapp import enviar_confirmacion_cita_cliente, normalizar_numero_whatsapp
+from services.whatsapp import enviar_cancelacion_cita_cliente, enviar_confirmacion_cita_cliente, normalizar_numero_whatsapp
 
 router = APIRouter(tags=["appointments"])
 
@@ -199,3 +208,97 @@ def crear_cita_manual(data: CrearCitaManualInput, user_id: str = Depends(obtener
             print(f"No se pudo enviar la confirmacion de cita por WhatsApp al cliente: {e}")
 
     return {"cita_creada": resultado}
+
+def _expirar_solicitudes_de_pago(appointment_id: str) -> None:
+    """
+    Si la cita esperaba un abono, su link de pago deja de servir: un pago tardio no debe
+    "confirmar" una cita que el profesional ya cancelo. Best-effort: no bloquea la cancelacion.
+    """
+    try:
+        (
+            supabase.table("wompi_payment_requests")
+            .update({"status": "expired"})
+            .eq("appointment_id", appointment_id)
+            .eq("status", "pending")
+            .execute()
+        )
+    except Exception as e:
+        print(f"No se pudo expirar el link de pago de la cita cancelada {appointment_id}: {e}")
+
+
+def _avisar_cancelacion_al_cliente(cita: dict, business: dict | None) -> str:
+    """
+    Manda al cliente el WhatsApp de cita cancelada. Devuelve que paso, para que el panel se lo
+    diga al profesional: 'enviado', 'sin_whatsapp' (la cita no tiene un WhatsApp valido, ej.
+    cliente presencial), 'no_disponible' (las plantillas v2 aun no estan activas en Meta) o
+    'fallo'. Nunca lanza: cancelar no depende de que el aviso salga.
+    """
+    numero = normalizar_numero_whatsapp(cita.get("client_phone") or "")
+    if not numero:
+        return "sin_whatsapp"
+    try:
+        fecha_hora = datetime.fromisoformat(cita["scheduled_at"])
+        resultado = enviar_cancelacion_cita_cliente(
+            client_phone=numero,
+            nombre_cliente=cita.get("client_name") or "Cliente",
+            nombre_negocio=(business or {}).get("name", "el negocio"),
+            nombre_servicio=(cita.get("services") or {}).get("name", "tu cita"),
+            datos_plantilla=datos_para_plantilla(business, fecha_hora, (cita.get("employees") or {}).get("name")),
+        )
+    except Exception as e:
+        print(f"No se pudo avisar la cancelacion de la cita {cita.get('id')} al cliente: {e}")
+        return "fallo"
+    if isinstance(resultado, dict) and "omitido" in resultado:
+        return "no_disponible"
+    if isinstance(resultado, dict) and "error" in resultado:
+        print(f"Fallo el aviso de cancelacion de la cita {cita.get('id')}: {resultado['error']}")
+        return "fallo"
+    return "enviado"
+
+
+@router.post("/appointments/{appointment_id}/cancel")
+def cancelar_cita_desde_el_panel(appointment_id: str, user_id: str = Depends(obtener_usuario_actual)):
+    """
+    El profesional (o el dueño) cancela una cita desde el panel, p. ej. una cita manual. Es una
+    cancelacion y no un borrado: la cita queda con estado "cancelled" para no perder el historial
+    ni las metricas, y el horario vuelve a quedar libre. Si el cliente tiene un WhatsApp valido se
+    le avisa con la plantilla de cancelacion; la respuesta dice si el aviso salio.
+
+    Puede cancelarla el dueño del negocio o el empleado al que pertenece la cita.
+    """
+    cita = get_appointment_full(appointment_id)
+    if not cita:
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
+
+    business_id = cita["business_id"]
+    if cita.get("employee_id"):
+        if verificar_acceso_empleado(cita["employee_id"], user_id) != business_id:
+            raise HTTPException(status_code=403, detail="No tienes permiso sobre esta cita")
+    else:
+        verificar_dueno(business_id, user_id)
+
+    if cita.get("status") == "cancelled":
+        raise HTTPException(status_code=409, detail="La cita ya estaba cancelada")
+    if cita.get("status") == "completed":
+        raise HTTPException(status_code=400, detail="No se puede cancelar una cita ya completada")
+
+    servicio = (
+        supabase.table("services").select("requires_payment").eq("id", cita.get("service_id")).execute().data
+    )
+    tiene_pago = bool(cita.get("status") == "confirmed" and servicio and servicio[0].get("requires_payment"))
+
+    actualizada = update_appointment_status(appointment_id, "cancelled", actor="business")
+    if not actualizada:
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
+
+    _expirar_solicitudes_de_pago(appointment_id)
+
+    try:
+        from services.realtime import emitir_evento_cita
+
+        emitir_evento_cita("appointment.cancelled", business_id, appointment_id)
+    except Exception as e:
+        print(f"No se pudo emitir el evento de tiempo real de la cita cancelada: {e}")
+
+    aviso = _avisar_cancelacion_al_cliente(cita, get_business_by_id(business_id))
+    return {"cita": actualizada, "aviso_cliente": aviso, "tiene_pago": tiene_pago}
