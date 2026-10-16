@@ -52,6 +52,12 @@ CHAT_LIMITE_IP_POR_MINUTO = _entero_env("CHAT_LIMITE_IP_POR_MINUTO", 40)
 CHAT_LIMITE_SESION_POR_HORA = _entero_env("CHAT_LIMITE_SESION_POR_HORA", 80)
 # Tope de tokens de la RESPUESTA del modelo (los argumentos de las tools tambien cuentan).
 LLM_MAX_TOKENS_SALIDA = _entero_env("LLM_MAX_TOKENS_SALIDA", 600)
+# Modelos de razonamiento (gpt-5.x, gpt-6.x, o-series; ver agent/modelos.py): su limite de salida
+# incluye el razonamiento oculto, asi que necesitan un tope mayor que el de un modelo normal.
+LLM_MAX_TOKENS_RAZONAMIENTO = _entero_env("LLM_MAX_TOKENS_RAZONAMIENTO", 4000)
+# Cuanto razona el modelo ("minimal", "low", "medium", "high"). Vacio = no se envia y rige el default
+# del modelo. Solo aplica a modelos de razonamiento.
+LLM_REASONING_EFFORT = (os.getenv("LLM_REASONING_EFFORT") or "").strip().lower() or None
 # Corte duro del presupuesto mensual de IA por negocio. Por defecto APAGADO:
 # el presupuesto por defecto es de US$5 y activarlo sin medir antes podria
 # dejar sin bot a un negocio real. Activar despues de fijar la linea base (T0.1).

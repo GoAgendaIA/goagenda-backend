@@ -12,6 +12,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
+from agent.modelos import parametros_llm
 from agent.prompts import build_system_prompt
 from agent.flujos import (
     TOOLS_DE_RELEVO_SEGURAS,
@@ -36,7 +37,9 @@ from core.settings import (
     CHAT_PROMPT_VERSION,
     CHAT_TOOLS_VERSION,
     DB_POOL_MAX_SIZE,
+    LLM_MAX_TOKENS_RAZONAMIENTO,
     LLM_MAX_TOKENS_SALIDA,
+    LLM_REASONING_EFFORT,
     DB_POOL_MIN_SIZE,
     DB_POOL_TIMEOUT,
     OPENAI_API_KEY,
@@ -113,13 +116,23 @@ _checkpointer.setup()
 # max_retries=0: los reintentos ya los hace _invocar_modelo (LLM_MAX_INTENTOS).
 # Con max_retries=3 aqui, un fallo se multiplicaba hasta 9 intentos.
 # max_tokens acota la respuesta (las tool calls tambien cuentan).
-_llm = ChatOpenAI(
-    model=CHAT_MODEL_NAME,
-    api_key=OPENAI_API_KEY,
-    temperature=LLM_TEMPERATURE,
-    max_retries=0,
-    max_tokens=LLM_MAX_TOKENS_SALIDA,
-)
+def _crear_llm(nombre_modelo: str) -> ChatOpenAI:
+    """Cliente de OpenAI con los parametros que corresponden al modelo (temperature solo si la acepta)."""
+    return ChatOpenAI(
+        model=nombre_modelo,
+        api_key=OPENAI_API_KEY,
+        max_retries=0,
+        **parametros_llm(
+            nombre_modelo,
+            temperatura=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS_SALIDA,
+            max_tokens_razonamiento=LLM_MAX_TOKENS_RAZONAMIENTO,
+            esfuerzo_de_razonamiento=LLM_REASONING_EFFORT,
+        ),
+    )
+
+
+_llm = _crear_llm(CHAT_MODEL_NAME)
 _TOOLS_PARA_MODELO = esquemas_para_modelo(TOOLS, CHAT_TOOLS_VERSION)
 _model = _llm.bind_tools(_TOOLS_PARA_MODELO)
 # Mismo modelo, pero obligado a llamar consultar_servicios_disponibles: se
@@ -132,13 +145,7 @@ _model_forzar_servicios = _llm.bind_tools(_TOOLS_PARA_MODELO, tool_choice="consu
 # parametros y las mismas herramientas que el principal.
 _model_simple = None
 if CHAT_MODEL_NAME_SIMPLE:
-    _model_simple = ChatOpenAI(
-        model=CHAT_MODEL_NAME_SIMPLE,
-        api_key=OPENAI_API_KEY,
-        temperature=LLM_TEMPERATURE,
-        max_retries=0,
-        max_tokens=LLM_MAX_TOKENS_SALIDA,
-    ).bind_tools(_TOOLS_PARA_MODELO)
+    _model_simple = _crear_llm(CHAT_MODEL_NAME_SIMPLE).bind_tools(_TOOLS_PARA_MODELO)
 
 _PATRON_PRECIO = re.compile(r"\$\s?(\d{1,3}(?:[.,]\d{3})+|\d+)")
 _PATRON_NUMERO = re.compile(r"\d+(?:[.,]\d+)*")
