@@ -29,6 +29,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 
 from services.db import supabase
+from core.settings import COP_POR_USD
 from services.scheduling import TZ_NEGOCIO, ahora_local
 
 PAGINA = 1000
@@ -346,6 +347,12 @@ def _resumen_periodo(
             },
             "costo_usd": costo,
             "costo_por_cita_ia_usd": round(costo / citas_ia, 4) if citas_ia else None,
+            # Costo promedio de IA por cita agendada por la IA, en pesos: costo total de IA del
+            # periodo / citas creadas por la IA en el periodo (tarjetas.citas_ia). Se convierte con
+            # una tasa configurable (COP_POR_USD) que se devuelve para poder auditar el calculo.
+            "costo_cop": round(costo * COP_POR_USD),
+            "costo_por_cita_ia_cop": round(costo * COP_POR_USD / citas_ia) if citas_ia else None,
+            "tasa_cop_por_usd": COP_POR_USD,
             # Optimizacion de tokens (T0.1): linea base para medir cada ahorro.
             "tokens": {
                 "llamadas": len(uso_periodo),
@@ -394,6 +401,7 @@ def _comparar(actual: dict, anterior: dict) -> dict:
             actual["ia"]["conversaciones"]["conversion"], anterior["ia"]["conversaciones"]["conversion"]
         ),
         "costo_ia_usd": delta(actual["ia"]["costo_usd"], anterior["ia"]["costo_usd"]),
+        "costo_por_cita_ia_cop": delta(actual["ia"]["costo_por_cita_ia_cop"], anterior["ia"]["costo_por_cita_ia_cop"]),
     }
 
 
@@ -454,6 +462,7 @@ def _fila_negocio(
         "tasa_cancelacion": resumen["citas"]["tasa_cancelacion"],
         "conversion": resumen["ia"]["conversaciones"]["conversion"],
         "costo_ia_usd": resumen["ia"]["costo_usd"],
+        "costo_por_cita_ia_cop": resumen["ia"]["costo_por_cita_ia_cop"],
         "dias_hasta_primera_cita": dias_hasta_primera,
         # Semana 0 = ultimos 7 dias, 1 = los 7 anteriores, etc. (uso semanal)
         "citas_por_semana": [por_semana.get(i, 0) for i in range(4)],

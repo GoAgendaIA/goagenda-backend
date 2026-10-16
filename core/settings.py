@@ -87,3 +87,20 @@ CHAT_MODEL_NAME_SIMPLE = (os.getenv("CHAT_MODEL_NAME_SIMPLE") or "").strip()
 # ---------------------------------------------------------------------
 CHAT_RETENCION_DIAS = _entero_env("CHAT_RETENCION_DIAS", 3)
 CHAT_LIMPIEZA_HORA_UTC = _entero_env("CHAT_LIMPIEZA_HORA_UTC", 8)
+
+
+# ---------------------------------------------------------------------
+# Tasa de cambio para mostrar los costos de IA en pesos colombianos (panel de metricas del
+# super admin). OpenAI factura en USD; esta tasa es CONFIGURABLE y no se consulta a ningun
+# servicio externo: cada respuesta de metricas incluye la tasa usada (tasa_cop_por_usd) para
+# que el calculo sea auditable. Actualizarla cuando la TRM cambie de forma relevante.
+# ---------------------------------------------------------------------
+def _tasa_cop_por_usd() -> float:
+    try:
+        tasa = float(os.getenv("COP_POR_USD") or 4000)
+    except ValueError:
+        return 4000.0
+    return tasa if tasa > 0 else 4000.0
+
+
+COP_POR_USD = _tasa_cop_por_usd()
