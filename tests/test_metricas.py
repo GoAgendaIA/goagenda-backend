@@ -112,7 +112,8 @@ def test_rendimiento_servicios_horas_domicilio_e_ingresos(datos):
     assert {h["hora"] for h in r["citas_por_hora"]} == {10, 11, 15}
     assert sum(d["total"] for d in r["citas_por_dia_semana"]) == 4
     # Todas ya pasaron (AHORA es posterior): cuentan las no canceladas, aunque nadie las marcara "completed".
-    assert r["ingresos_estimados"] == {"completadas": 125000.0, "por_realizar": 0.0, "recargos_domicilio": 5000.0}
+    assert r["ingresos_estimados"] == {"completadas": 125000.0, "por_realizar": 0.0, "citas_por_realizar": 0,
+                                       "recargos_domicilio": 5000.0}
 
 
 def test_ingresos_se_deciden_por_la_fecha_y_no_por_el_estado(db, datos):
@@ -347,3 +348,37 @@ def test_la_analitica_nunca_tumba_la_conversacion(db):
     db.fallar_en["chat_sessions"] = RuntimeError("tabla sin migrar")
     conversation_tracking.registrar_turno_conversacion(BIZ, "s1")
     conversation_tracking.marcar_conversacion(BIZ, "s1", handed_off=True)
+
+
+def test_por_realizar_cuenta_las_citas_futuras_aunque_el_periodo_termine_hoy(db, datos):
+    """
+    Bug devuelto por QA: con el periodo habitual (termina hoy) las citas futuras quedaban
+    fuera del rango y "Por realizar" mostraba siempre $0.
+    """
+    db.sembrar("appointments",
+               cita(telefono="3190000001", programada="2026-10-20T10:00:00"),                                  # Corte 15.000
+               cita(telefono="3190000002", programada="2026-11-05T15:00:00", servicio="s-tinte"),              # Tinte 80.000
+               cita(telefono="3190000003", programada="2026-10-22T10:00:00", status="pending_payment",
+                    servicio="s-tinte"),                                                                         # 80.000
+               cita(telefono="3190000004", programada="2026-10-21T10:00:00", status="cancelled", cancelled_by="ai"),
+               cita(business_id=OTRO, telefono="3190000005", servicio="s-masaje", programada="2026-10-25T10:00:00"))
+    ing = metrics.metricas_negocio(BIZ, DESDE, HASTA)["rendimiento"]["ingresos_estimados"]  # HASTA = 15 de octubre
+
+    assert ing["por_realizar"] == 15000.0 + 80000.0 + 80000.0
+    assert ing["citas_por_realizar"] == 3
+    # Lo ya ocurrido sigue siendo del periodo: no se mezcla con lo futuro.
+    assert ing["completadas"] == 125000.0
+
+
+def test_por_realizar_no_depende_del_periodo_que_se_mire(db, datos):
+    db.sembrar("appointments", cita(telefono="3190000006", programada="2026-10-20T10:00:00"))
+    septiembre = metrics.metricas_negocio(BIZ, date(2026, 9, 1), date(2026, 9, 30))["rendimiento"]["ingresos_estimados"]
+    octubre = metrics.metricas_negocio(BIZ, date(2026, 10, 1), date(2026, 10, 31))["rendimiento"]["ingresos_estimados"]
+    assert septiembre["por_realizar"] == octubre["por_realizar"] == 15000.0
+    assert septiembre["completadas"] == 0.0
+
+
+def test_citas_con_fecha_invalida_no_cuentan_como_por_realizar(db, datos):
+    db.sembrar("appointments", cita(telefono="3190000007", programada="no es fecha"))
+    ing = metrics.metricas_negocio(BIZ, DESDE, HASTA)["rendimiento"]["ingresos_estimados"]
+    assert ing["por_realizar"] == 0.0 and ing["citas_por_realizar"] == 0

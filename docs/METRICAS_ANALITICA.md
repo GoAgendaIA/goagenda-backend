@@ -80,7 +80,7 @@ Los porcentajes y tasas son `null` cuando el denominador es 0 (nunca un cero inv
   cobertura o respuesta manual del dueño desde el panel.
 - **Negocio activo:** tuvo una cita creada o una conversación en los últimos `inactividad_dias`;
   `inactivo` si tuvo actividad antes pero no ahora; `sin_uso` si nunca la tuvo.
-- **Ingresos estimados:** precio actual del servicio (no un histórico del precio cobrado).
+- **Ingresos estimados:** no dependen del estado `completed`. *Completadas*: citas no canceladas del periodo cuya hora ya pasó. *Por realizar*: **todas** las citas futuras (confirmadas, pendientes o con pago pendiente) a partir de ahora, **sin importar el periodo elegido** (con un rango que termina hoy, limitarlo al periodo mostraba siempre $0); `citas_por_realizar` es su cantidad.
 - **Costo de IA por cita:** costo del periodo / citas creadas por la IA del periodo.
 
 ## Alertas (fase 3)

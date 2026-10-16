@@ -285,22 +285,31 @@ def _resumen_periodo(
             por_hora[dt.hour] += 1
     domicilios = sum(1 for c in activas if c.get("is_home_visit"))
     ingresos_completadas = 0.0
-    ingresos_por_realizar = 0.0
     recargos_domicilio = 0.0
     # Nadie marca las citas como "completed" (no hay endpoint ni flujo que lo haga), asi que
-    # el estado no sirve para saber si una cita ya se realizo. Se decide por la FECHA:
-    # una cita no cancelada cuya hora ya paso es un ingreso realizado; una futura
-    # (confirmada o con pago pendiente) es un ingreso por realizar.
+    # el estado no sirve para saber si una cita ya se realizo. Se decide por la FECHA: una cita
+    # no cancelada cuya hora ya paso es un ingreso realizado (de las del periodo elegido).
     for c in programadas_periodo:
         if c.get("status") == "cancelled":
             continue
-        precio = float((servicios.get(c.get("service_id")) or {}).get("price") or 0)
         # programadas_periodo ya descarto las fechas vacias o invalidas.
         if c.get("status") == "completed" or _a_local(c.get("scheduled_at")) < ahora:
-            ingresos_completadas += precio
+            ingresos_completadas += float((servicios.get(c.get("service_id")) or {}).get("price") or 0)
             recargos_domicilio += float(c.get("home_visit_fee") or 0)
-        elif c.get("status") in ("confirmed", "pending", "pending_payment"):
-            ingresos_por_realizar += precio
+
+    # Por realizar: TODAS las citas futuras (confirmadas, pendientes o con pago pendiente),
+    # sin importar el periodo elegido. Es lo que esta por venir a partir de ahora; si se
+    # limitara al periodo, un rango que termina hoy (el habitual) mostraba siempre $0.
+    ingresos_por_realizar = 0.0
+    citas_por_realizar = 0
+    for c in reales:
+        if c.get("status") not in ("confirmed", "pending", "pending_payment"):
+            continue
+        programada = _a_local(c.get("scheduled_at"))
+        if programada is None or programada < ahora:
+            continue
+        citas_por_realizar += 1
+        ingresos_por_realizar += float((servicios.get(c.get("service_id")) or {}).get("price") or 0)
 
     return {
         "tarjetas": {
@@ -359,6 +368,7 @@ def _resumen_periodo(
             "ingresos_estimados": {
                 "completadas": round(ingresos_completadas, 2),
                 "por_realizar": round(ingresos_por_realizar, 2),
+                "citas_por_realizar": citas_por_realizar,
                 "recargos_domicilio": round(recargos_domicilio, 2),
             },
         },
