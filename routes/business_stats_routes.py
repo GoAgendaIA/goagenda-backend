@@ -64,9 +64,8 @@ def estadisticas_del_negocio(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # verificar_dueno ya garantizo que el negocio existe (404 si no), asi que aqui nunca es None.
     resultado = metrics.metricas_negocio(business_id, desde, hasta, group_by, comparar, refrescar=refrescar)
-    if resultado is None:
-        raise HTTPException(status_code=404, detail="Negocio no encontrado")
     return _para_el_dueno(resultado)
 
 
