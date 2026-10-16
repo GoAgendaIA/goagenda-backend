@@ -703,3 +703,147 @@ def test_errores_de_postgrest_se_traducen(cliente, como, negocio, db, codigo, st
 
     db.fallar_en["home_visit_zones"] = APIError({"code": codigo, "message": "x"})
     assert cliente.get(f"/home-visit-zones?business_id={BIZ}", headers=como("dueno")).status_code == status
+
+
+# ------------------------------------------------------------------------------
+# Cancelar una cita desde el panel (el profesional)
+# ------------------------------------------------------------------------------
+
+@pytest.fixture
+def cancelacion(agenda, db, monkeypatch):
+    """Cita futura confirmada del empleado `emp-staff`; el aviso por WhatsApp queda espiado."""
+    from routes import manual_appointments as ma
+
+    aviso = MagicMock(return_value={"messages": [{"id": "wamid"}]})
+    monkeypatch.setattr(ma, "enviar_cancelacion_cita_cliente", aviso)
+    cita = db.sembrar("appointments", {
+        "id": "c1", "business_id": BIZ, "employee_id": "emp-staff", "client_phone": "573001234567", "client_name": "Frank",
+        "service_id": "s1", "scheduled_at": "2026-10-10T09:00:00", "status": "confirmed",
+        # El doble de Supabase no resuelve los joins (en produccion los trae get_appointment_full).
+        "services": {"name": "Corte", "price": 15000, "duration_minutes": 30}, "employees": {"name": "Luis"}})
+    return SimpleNamespace(aviso=aviso, evento=agenda.evento, cita=cita)
+
+
+def test_el_dueno_cancela_una_cita_y_el_cliente_recibe_el_aviso(cliente, como, cancelacion, db):
+    r = cliente.post("/appointments/c1/cancel", headers=como("dueno"))
+
+    assert r.status_code == 200
+    cuerpo = r.json()
+    assert cuerpo["cita"]["status"] == "cancelled" and cuerpo["cita"]["cancelled_by"] == "business"
+    assert cuerpo["aviso_cliente"] == "enviado" and cuerpo["tiene_pago"] is False
+    assert db.filas("appointments")[0]["status"] == "cancelled"  # se cancela, no se borra
+    kw = cancelacion.aviso.call_args.kwargs
+    assert kw["client_phone"] == "573001234567" and kw["nombre_cliente"] == "Frank"
+    assert kw["nombre_negocio"] == "Barberia" and kw["nombre_servicio"] == "Corte"
+    assert kw["datos_plantilla"]["fecha"] == "sábado 10 de octubre" and kw["datos_plantilla"]["hora"] == "9:00 am"
+    assert kw["datos_plantilla"]["profesional"] == "Luis"
+    cancelacion.evento.assert_called_once_with("appointment.cancelled", BIZ, "c1")
+
+
+def test_el_profesional_cancela_su_propia_cita_pero_no_la_de_otro(cliente, como, cancelacion, db):
+    db.sembrar("appointments", {"id": "c2", "business_id": BIZ, "employee_id": "emp-owner", "client_phone": "573009998877",
+                                "client_name": "Ana", "service_id": "s1", "scheduled_at": "2026-10-10T10:00:00", "status": "confirmed"})
+    assert cliente.post("/appointments/c2/cancel", headers=como("empleado")).status_code == 403  # es de otro profesional
+    assert cliente.post("/appointments/c1/cancel", headers=como("empleado")).status_code == 200
+    assert cliente.post("/appointments/c2/cancel", headers=como("desconocido")).status_code == 403
+
+
+def test_cancelar_exige_sesion(cliente, cancelacion):
+    assert cliente.post("/appointments/c1/cancel").status_code == 401
+
+
+def test_cita_inexistente_ya_cancelada_o_completada(cliente, como, cancelacion, db):
+    assert cliente.post("/appointments/fantasma/cancel", headers=como("dueno")).status_code == 404
+
+    assert cliente.post("/appointments/c1/cancel", headers=como("dueno")).status_code == 200
+    repetida = cliente.post("/appointments/c1/cancel", headers=como("dueno"))
+    assert repetida.status_code == 409 and "ya estaba cancelada" in repetida.json()["detail"]
+    assert cancelacion.aviso.call_count == 1  # no se avisa dos veces
+
+    db.sembrar("appointments", {"id": "c3", "business_id": BIZ, "employee_id": "emp-staff", "client_phone": "573001234567",
+                                "service_id": "s1", "scheduled_at": "2026-10-01T09:00:00", "status": "completed"})
+    assert cliente.post("/appointments/c3/cancel", headers=como("dueno")).status_code == 400
+
+
+def test_cita_sin_empleado_solo_la_cancela_el_dueno(cliente, como, cancelacion, db):
+    db.sembrar("appointments", {"id": "c4", "business_id": BIZ, "employee_id": None, "client_phone": "573001234567",
+                                "client_name": "Sin empleado", "service_id": "s1", "scheduled_at": "2026-10-10T11:00:00", "status": "confirmed"})
+    assert cliente.post("/appointments/c4/cancel", headers=como("empleado")).status_code == 403
+    assert cliente.post("/appointments/c4/cancel", headers=como("dueno")).status_code == 200
+
+
+def test_cita_de_un_cliente_sin_whatsapp_se_cancela_sin_avisar(cliente, como, cancelacion, db):
+    db.sembrar("appointments", {"id": "c5", "business_id": BIZ, "employee_id": "emp-staff", "client_phone": "",
+                                "client_name": "Presencial", "service_id": "s1", "scheduled_at": "2026-10-10T10:00:00", "status": "confirmed"})
+    r = cliente.post("/appointments/c5/cancel", headers=como("dueno")).json()
+    assert r["cita"]["status"] == "cancelled" and r["aviso_cliente"] == "sin_whatsapp"
+    cancelacion.aviso.assert_not_called()
+
+
+def test_el_aviso_dice_si_las_plantillas_no_estan_activas_o_si_fallo(cliente, como, cancelacion, db):
+    for id_, resultado, esperado in [
+        ("c6", {"omitido": "plantillas v2 de WhatsApp no activas"}, "no_disponible"),
+        ("c7", {"error": "template not found"}, "fallo"),
+    ]:
+        db.sembrar("appointments", {"id": id_, "business_id": BIZ, "employee_id": "emp-staff", "client_phone": "573001234567",
+                                    "service_id": "s1", "scheduled_at": "2026-10-10T10:00:00", "status": "confirmed"})
+        cancelacion.aviso.return_value = resultado
+        r = cliente.post(f"/appointments/{id_}/cancel", headers=como("dueno"))
+        assert r.status_code == 200 and r.json()["aviso_cliente"] == esperado and r.json()["cita"]["status"] == "cancelled"
+
+
+def test_si_el_envio_lanza_error_la_cita_igual_se_cancela(cliente, como, cancelacion, capsys):
+    cancelacion.aviso.side_effect = RuntimeError("Meta caido")
+    r = cliente.post("/appointments/c1/cancel", headers=como("dueno"))
+    assert r.status_code == 200 and r.json()["aviso_cliente"] == "fallo" and r.json()["cita"]["status"] == "cancelled"
+    assert "No se pudo avisar la cancelacion" in capsys.readouterr().out
+
+
+def test_cancelar_una_cita_con_pago_pendiente_expira_su_link_y_avisa_del_abono(cliente, como, cancelacion, db):
+    db.sembrar("services", {"id": "s-abono", "business_id": BIZ, "name": "Tinte", "price": 80000, "requires_payment": True, "active": True})
+    db.sembrar("appointments",
+               {"id": "c8", "business_id": BIZ, "employee_id": "emp-staff", "client_phone": "573001234567", "client_name": "Pepe",
+                "service_id": "s-abono", "scheduled_at": "2026-10-10T10:00:00", "status": "pending_payment"},
+               {"id": "c9", "business_id": BIZ, "employee_id": "emp-staff", "client_phone": "573001234567", "client_name": "Pepe",
+                "service_id": "s-abono", "scheduled_at": "2026-10-10T11:00:00", "status": "confirmed"})
+    db.sembrar("wompi_payment_requests",
+               {"id": "r1", "business_id": BIZ, "appointment_id": "c8", "status": "pending"},
+               {"id": "r2", "business_id": BIZ, "appointment_id": "c8", "status": "approved"},
+               {"id": "r3", "business_id": BIZ, "appointment_id": "otra", "status": "pending"})
+
+    pendiente = cliente.post("/appointments/c8/cancel", headers=como("dueno")).json()
+    assert pendiente["tiene_pago"] is False  # aun no pago nada
+    estados = {r["id"]: r["status"] for r in db.filas("wompi_payment_requests")}
+    assert estados == {"r1": "expired", "r2": "approved", "r3": "pending"}
+
+    pagada = cliente.post("/appointments/c9/cancel", headers=como("dueno")).json()
+    assert pagada["tiene_pago"] is True  # ya habia abonado: hay que coordinar la devolucion
+
+
+def test_si_no_se_puede_expirar_el_link_igual_se_cancela(cliente, como, cancelacion, db, capsys):
+    db.fallar_en["wompi_payment_requests"] = RuntimeError("tabla caida")
+    r = cliente.post("/appointments/c1/cancel", headers=como("dueno"))
+    assert r.status_code == 200 and r.json()["cita"]["status"] == "cancelled"
+    assert "No se pudo expirar el link de pago" in capsys.readouterr().out
+
+
+def test_si_la_cita_desaparece_mientras_se_cancela(cliente, como, cancelacion, monkeypatch):
+    from routes import manual_appointments as ma
+
+    monkeypatch.setattr(ma, "update_appointment_status", lambda *a, **k: None)
+    assert cliente.post("/appointments/c1/cancel", headers=como("dueno")).status_code == 404
+
+
+def test_un_fallo_del_tiempo_real_no_impide_cancelar(cliente, como, cancelacion, capsys):
+    cancelacion.evento.side_effect = RuntimeError("socket cerrado")
+    assert cliente.post("/appointments/c1/cancel", headers=como("dueno")).status_code == 200
+    assert "tiempo real" in capsys.readouterr().out
+
+
+def test_el_empleado_de_otro_negocio_no_cancela(cliente, como, cancelacion, db):
+    db.sembrar("businesses", {"id": "b2", "name": "Otra", "owner_id": "otro-dueno", "blocked": False})
+    db.sembrar("employees", {"id": "emp-b2", "business_id": "b2", "user_id": "dueno", "name": "X", "role": "staff", "active": True})
+    db.sembrar("appointments", {"id": "c10", "business_id": BIZ, "employee_id": "emp-b2", "client_phone": "573001234567",
+                                "service_id": "s1", "scheduled_at": "2026-10-10T10:00:00", "status": "confirmed"})
+    r = cliente.post("/appointments/c10/cancel", headers=como("dueno"))
+    assert r.status_code == 403
