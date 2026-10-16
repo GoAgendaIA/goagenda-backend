@@ -212,6 +212,16 @@ Para probar el envio real sin tener que agendar una cita, usar `POST /test-whats
 
 Para probar el envio de la plantilla sin esperar al scheduler ni a una cita real, usar `POST /test-whatsapp-reminder-template?business_id=<id>&numero_whatsapp=<numero>` (protegido con `x-api-key`), o `POST /test-reminders` para forzar una corrida completa de `revisar_y_enviar_recordatorios`.
 
+## Retención de conversaciones del chat
+
+El historial de cada conversación del chat público (donde quedan el nombre y el WhatsApp del cliente) vive en los checkpoints de LangGraph. `services/retencion_conversaciones.py` elimina cada conversación **a los `CHAT_RETENCION_DIAS` (3) días de su última actividad**, una por una: la de un cliente se borra sin afectar la de otro.
+
+- **Qué se borra:** solo el historial (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`). **No** se tocan citas, reservas, pagos ni `chat_sessions` (contadores y fechas, sin contenido; alimenta las métricas de conversión).
+- **Cuándo corre:** una vez al día (`CHAT_LIMPIEZA_HORA_UTC`, 08:00 UTC = 03:00 Colombia), con cron en el scheduler. El plazo y la frecuencia son independientes. `CHAT_RETENCION_DIAS=0` la desactiva.
+- **Efecto para el cliente:** si vuelve después del plazo con el mismo navegador, su historial aparece vacío y el asistente empieza de cero (vuelve a pedirle el WhatsApp).
+- **Ensayo antes de borrar:** `POST /admin/chat-retention/run` (super admin) cuenta cuántas se eliminarían sin borrar nada (`dry_run=true` por defecto); con `?dry_run=false` ejecuta la limpieza real.
+- **Primera corrida:** elimina todo lo que ya tenga más de 3 días de inactividad, incluido el historial anterior a esta función. Es irreversible; conviene hacer el ensayo antes.
+
 ## Variables de entorno
 
 Ver `.env.example` para la lista completa con descripciones. Resumen:

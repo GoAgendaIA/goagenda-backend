@@ -75,3 +75,15 @@ CHAT_FLUJOS_DETERMINISTAS = (os.getenv("CHAT_FLUJOS_DETERMINISTAS") or "").strip
 # "relay": las llamadas que solo relatan un resultado usan CHAT_MODEL_NAME_SIMPLE.
 CHAT_ENRUTAMIENTO = (os.getenv("CHAT_ENRUTAMIENTO") or "").strip().lower()
 CHAT_MODEL_NAME_SIMPLE = (os.getenv("CHAT_MODEL_NAME_SIMPLE") or "").strip()
+
+
+# ---------------------------------------------------------------------
+# Retencion de conversaciones del chat publico (services/retencion_conversaciones.py).
+# El historial de cada conversacion (checkpoints de LangGraph) guarda nombres y
+# telefonos de clientes: se elimina a los CHAT_RETENCION_DIAS dias de su ULTIMA
+# actividad, cada conversacion por separado. 0 desactiva la limpieza.
+# La frecuencia es independiente del plazo: el job corre una vez al dia a la
+# hora UTC indicada (08:00 UTC = 03:00 en Colombia).
+# ---------------------------------------------------------------------
+CHAT_RETENCION_DIAS = _entero_env("CHAT_RETENCION_DIAS", 3)
+CHAT_LIMPIEZA_HORA_UTC = _entero_env("CHAT_LIMPIEZA_HORA_UTC", 8)
