@@ -11,6 +11,10 @@ PRECIOS_POR_MILLON = {
     "gpt-4.1-mini": (0.40, 0.10, 1.60),
     "gpt-4.1": (2.00, 0.50, 8.00),
     "gpt-4.1-nano": (0.10, 0.025, 0.40),
+    # Modelos de razonamiento: los tokens de razonamiento se facturan como salida y ya vienen
+    # incluidos en completion_tokens, asi que el calculo no cambia.
+    "gpt-6-luna": (0.10, 0.01, 0.50),
+    "gpt-5-nano": (0.05, 0.005, 0.40),
 }
 MODELO_PRECIO_POR_DEFECTO = "gpt-4.1-mini"
 _modelos_sin_precio_avisados: set[str] = set()
