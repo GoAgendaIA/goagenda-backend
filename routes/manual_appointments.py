@@ -5,6 +5,7 @@ from datetime import datetime
 from services.db import get_home_visit_zones, get_services, create_appointment, get_business_by_id, get_employee_by_id, supabase
 from services.scheduling import es_hora_valida, hay_choque_de_horario, formatear_fecha_natural, generar_horas_disponibles
 from services.auth import obtener_usuario_actual, verificar_acceso_empleado, verificar_dueno
+from services.notificaciones_cliente import datos_para_plantilla, nombre_del_empleado
 from services.whatsapp import enviar_confirmacion_cita_cliente, normalizar_numero_whatsapp
 
 router = APIRouter(tags=["appointments"])
@@ -192,6 +193,7 @@ def crear_cita_manual(data: CrearCitaManualInput, user_id: str = Depends(obtener
                 nombre_negocio=business.get("name", "el negocio") if business else "el negocio",
                 nombre_servicio=servicio["name"],
                 fecha_hora_texto=formatear_fecha_natural(fecha_hora_dt),
+                datos_plantilla=datos_para_plantilla(business, fecha_hora_dt, nombre_del_empleado(data.employee_id)),
             )
         except Exception as e:
             print(f"No se pudo enviar la confirmacion de cita por WhatsApp al cliente: {e}")

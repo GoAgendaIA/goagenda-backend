@@ -1147,6 +1147,22 @@ def cancelar_cita(
     except Exception as e:
         print(f"No se pudo enviar la notificacion de cancelacion: {e}")
 
+    try:
+        from services.db import get_business_by_id as _negocio
+        from services.notificaciones_cliente import datos_para_plantilla
+        from services.whatsapp import enviar_cancelacion_cita_cliente
+
+        negocio_cliente = _negocio(business_id)
+        enviar_cancelacion_cita_cliente(
+            client_phone=client_phone,
+            nombre_cliente=cita.get("client_name") or "Cliente",
+            nombre_negocio=(negocio_cliente or {}).get("name", "el negocio"),
+            nombre_servicio=servicio_info.get("name", "tu cita"),
+            datos_plantilla=datos_para_plantilla(negocio_cliente, datetime.fromisoformat(cita["scheduled_at"])),
+        )
+    except Exception as e:
+        print(f"No se pudo avisar la cancelacion al cliente por WhatsApp: {e}")
+
     from services.realtime import emitir_evento_cita
 
     emitir_evento_cita("appointment.cancelled", business_id, appointment_id)
@@ -1270,6 +1286,21 @@ def reprogramar_cita(
         )
     except Exception as e:
         print(f"No se pudo enviar la notificacion de reprogramacion: {e}")
+
+    try:
+        from services.db import get_business_by_id as _negocio
+        from services.notificaciones_cliente import datos_para_plantilla
+        from services.whatsapp import enviar_reprogramacion_cita_cliente
+
+        business_cliente = _negocio(business_id)
+        enviar_reprogramacion_cita_cliente(
+            client_phone=client_phone,
+            nombre_cliente=cita_actual.get("client_name") or "Cliente",
+            nombre_negocio=(business_cliente or {}).get("name", "el negocio"),
+            datos_plantilla=datos_para_plantilla(business_cliente, nueva_fecha_hora_dt),
+        )
+    except Exception as e:
+        print(f"No se pudo avisar la reprogramacion al cliente por WhatsApp: {e}")
 
     from services.realtime import emitir_evento_cita
 
