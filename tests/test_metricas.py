@@ -382,3 +382,60 @@ def test_citas_con_fecha_invalida_no_cuentan_como_por_realizar(db, datos):
     db.sembrar("appointments", cita(telefono="3190000007", programada="no es fecha"))
     ing = metrics.metricas_negocio(BIZ, DESDE, HASTA)["rendimiento"]["ingresos_estimados"]
     assert ing["por_realizar"] == 0.0 and ing["citas_por_realizar"] == 0
+
+
+# --- Costo promedio de IA por cita, en pesos (COP) -------------------------------------------------------------
+
+def test_costo_por_cita_de_ia_en_pesos(datos, monkeypatch):
+    """costo total de IA del periodo / citas agendadas por la IA, convertido con la tasa configurada."""
+    monkeypatch.setattr(metrics, "COP_POR_USD", 4000.0)
+    r = metrics.metricas_negocio(BIZ, DESDE, HASTA)
+    ia, citas_ia = r["ia"], r["tarjetas"]["citas_ia"]
+
+    assert citas_ia > 0 and ia["costo_usd"] > 0
+    assert ia["tasa_cop_por_usd"] == 4000.0
+    assert ia["costo_cop"] == round(ia["costo_usd"] * 4000)
+    assert ia["costo_por_cita_ia_cop"] == round(ia["costo_usd"] * 4000 / citas_ia)
+    # Coherente con el valor en dolares que ya existia.
+    assert abs(ia["costo_por_cita_ia_cop"] - ia["costo_por_cita_ia_usd"] * 4000) <= 1
+
+
+def test_la_tasa_configurada_cambia_el_resultado_y_se_informa(datos, monkeypatch):
+    monkeypatch.setattr(metrics, "COP_POR_USD", 4000.0)
+    base = metrics.metricas_negocio(BIZ, DESDE, HASTA, refrescar=True)["ia"]
+    monkeypatch.setattr(metrics, "COP_POR_USD", 5000.0)
+    otra = metrics.metricas_negocio(BIZ, DESDE, HASTA, refrescar=True)["ia"]
+
+    assert otra["tasa_cop_por_usd"] == 5000.0
+    assert otra["costo_por_cita_ia_cop"] > base["costo_por_cita_ia_cop"]
+    assert abs(otra["costo_por_cita_ia_cop"] - base["costo_por_cita_ia_cop"] * 1.25) <= 2
+
+
+def test_sin_citas_de_ia_no_hay_promedio(db, datos):
+    db.reset()
+    db.sembrar("businesses", {"id": BIZ, "name": "Solo manual", "owner_id": "d", "created_at": "2026-09-01T10:00:00+00:00", "blocked": False})
+    db.sembrar("services", {"id": "s-corte", "business_id": BIZ, "name": "Corte", "price": 15000, "active": True})
+    db.sembrar("appointments", cita(source="manual"))
+    db.sembrar("ai_usage_log", {"business_id": BIZ, "estimated_cost_usd": 0.5, "created_at": "2026-10-05T14:00:00+00:00"})
+
+    ia = metrics.metricas_negocio(BIZ, DESDE, HASTA)["ia"]
+    assert ia["costo_por_cita_ia_cop"] is None and ia["costo_por_cita_ia_usd"] is None
+    assert ia["costo_cop"] > 0  # el gasto existe aunque ninguna cita salio de la IA
+
+
+def test_el_promedio_en_pesos_tambien_esta_en_la_comparacion_y_por_negocio(datos):
+    comparado = metrics.metricas_negocio(BIZ, DESDE, HASTA, comparar=True)
+    assert "costo_por_cita_ia_cop" in comparado["comparacion"]
+    assert set(comparado["comparacion"]["costo_por_cita_ia_cop"]) == {"actual", "anterior", "variacion", "variacion_pct"}
+
+    global_ = metrics.metricas_globales(DESDE, HASTA)
+    fila = next(n for n in global_["negocios"] if n["business_id"] == BIZ)
+    assert fila["costo_por_cita_ia_cop"] == metrics.metricas_negocio(BIZ, DESDE, HASTA)["ia"]["costo_por_cita_ia_cop"]
+
+
+@pytest.mark.parametrize("valor, esperado", [("4150.5", 4150.5), ("", 4000.0), ("abc", 4000.0), ("0", 4000.0), ("-3", 4000.0)])
+def test_la_tasa_se_lee_del_entorno_con_un_valor_seguro_por_defecto(monkeypatch, valor, esperado):
+    from core import settings
+
+    monkeypatch.setenv("COP_POR_USD", valor)
+    assert settings._tasa_cop_por_usd() == esperado

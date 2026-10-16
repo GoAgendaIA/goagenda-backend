@@ -50,7 +50,8 @@ citas         { total, por_estado{...}, reprogramadas, tasa_cancelacion, porcent
 ia            { por_origen{ai,manual,web,unknown:{total,porcentaje}}, porcentaje_citas_ia,
                 canceladas_por_ia, reprogramadas_por_ia,
                 conversaciones{iniciadas,con_cita,transferidas_a_humano,conversion},
-                costo_usd, costo_por_cita_ia_usd }
+                costo_usd, costo_por_cita_ia_usd,
+                costo_cop, costo_por_cita_ia_cop, tasa_cop_por_usd }
 rendimiento   { servicios_mas_agendados, citas_por_dia_semana, citas_por_hora,
                 domicilios{total,porcentaje}, ingresos_estimados{completadas,por_realizar,recargos_domicilio} }
 comparacion   (si comparar=true) { <indicador>: {actual, anterior, variacion, variacion_pct} }
@@ -104,3 +105,13 @@ Los negocios bloqueados no generan alertas.
 - **Cancelaciones del panel:** quedan con `cancelled_by = NULL` (se asume del negocio).
 - **Exportación CSV/Excel:** el PDF la marca como mejora posterior; no está implementada.
 - **El gráfico es del front:** este repo entrega solo el contrato de datos.
+
+## Costo promedio de IA por cita (COP)
+
+`ia.costo_por_cita_ia_cop` = **costo total de IA del periodo ÷ citas agendadas por la IA en el periodo**, en pesos colombianos.
+
+- *Costo total de IA* (`ia.costo_usd`): suma del costo estimado de todas las llamadas al modelo del periodo (también las de conversaciones que no terminaron en cita: es el costo operativo real).
+- *Citas agendadas por la IA* (`tarjetas.citas_ia`): citas creadas en el periodo con origen `ai` (las anteriores a la instrumentación tienen origen desconocido y no cuentan).
+- *Conversión a pesos:* `costo_usd × COP_POR_USD`. La tasa es **manual** (variable de entorno `COP_POR_USD`, por defecto 4000) y cada respuesta trae `tasa_cop_por_usd` para auditar el cálculo. Actualizarla cuando la TRM cambie de forma relevante.
+- Sin citas de IA en el periodo no hay promedio (`null`), aunque haya gasto (`costo_cop`).
+- Se compara con el periodo anterior (`comparacion.costo_por_cita_ia_cop`) y aparece por negocio (`negocios[].costo_por_cita_ia_cop`).
