@@ -50,6 +50,9 @@ Cada host descarga la suya: el VPS (arm64) y Seenode (exige amd64). La misma ima
 
 ## VPS: agregar el worker (pruebas)
 
+**Automático (recomendado):** `scripts/activar_worker_vps.sh` hace los pasos de abajo, verifica que el worker ejecute el primer ciclo de
+recordatorios (hasta 6 min) y **revierte solo** si algo falla. Lo que sigue es lo que hace, por si prefieres hacerlo a mano.
+
 El `docker-compose.yml` del VPS vive solo en el servidor. Pasos, en este orden (cada uno es seguro por separado):
 
 1. **Desplegar este cambio.** No cambia nada: la API sigue en modo `api`.
