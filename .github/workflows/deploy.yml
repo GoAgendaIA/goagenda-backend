@@ -73,7 +73,8 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/arm64
+          # amd64 (Seenode exige linux/amd64) + arm64 (el VPS). Un solo tag sirve a los dos: cada host baja su arquitectura.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:latest

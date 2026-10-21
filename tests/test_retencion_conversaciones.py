@@ -201,7 +201,8 @@ def test_el_job_diario_esta_registrado_con_cron():
 
     jobs = {job[0]: (job[1], job[2]) for job in main.scheduler.jobs}
     argumentos, opciones = jobs[rc.limpiar_conversaciones_vencidas]
-    assert argumentos == ("cron",) and opciones == {"hour": 8, "minute": 0, "misfire_grace_time": 3600}
+    assert argumentos == ("cron",)
+    assert (opciones["hour"], opciones["minute"], opciones["misfire_grace_time"]) == (8, 0, 3600)
 
 
 def test_endpoint_de_super_admin_ensaya_por_defecto_y_borra_si_se_pide(cliente, como, db, dos_conversaciones, monkeypatch):

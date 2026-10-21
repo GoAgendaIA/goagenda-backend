@@ -45,6 +45,8 @@ _ENV_DE_PRUEBA = {
     "BAILEYS_SERVICE_URL": "http://baileys.test",
     "WOMPI_ENCRYPTION_KEY": Fernet.generate_key().decode(),
     "GOAGENDA_FRONTEND_URL": "http://frontend.test",
+    # El broker de Dramatiq (worker.py) se crea sin conectar: nunca se encola nada de verdad en pruebas.
+    "REDIS_URL": "redis://redis.test:6379/0",
     "CORS_ALLOWED_ORIGINS": "http://frontend.test",
     "SUPER_ADMIN_EMAIL": "",
     "SUPER_ADMIN_PASSWORD": "",
@@ -52,7 +54,7 @@ _ENV_DE_PRUEBA = {
     "GOOGLE_APPLICATION_CREDENTIALS": "",
 }
 for _clave in list(os.environ):
-    if _clave.startswith(("SUPABASE", "WOMPI", "WHATSAPP", "GOAGENDA", "OPENAI", "FIREBASE", "BAILEYS", "DB_POOL")):
+    if _clave.startswith(("SUPABASE", "WOMPI", "WHATSAPP", "GOAGENDA", "OPENAI", "FIREBASE", "BAILEYS", "DB_POOL", "REDIS", "TAREAS_EN")):
         del os.environ[_clave]
 os.environ.update(_ENV_DE_PRUEBA)
 

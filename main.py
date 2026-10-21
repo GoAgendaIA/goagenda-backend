@@ -19,8 +19,8 @@ from routes.business_hours_routes import router as business_hours_router
 from routes.business_settings_routes import router as business_settings_router
 from services.db import supabase
 from services.reminder_service import revisar_y_enviar_recordatorios
-from core.settings import CHAT_LIMPIEZA_HORA_UTC
-from services.retencion_conversaciones import limpiar_conversaciones_vencidas
+from core.settings import TAREAS_EN_SEGUNDO_PLANO
+from services.tareas_periodicas import iniciar_en_la_api as iniciar_tareas_en_la_api
 from routes.manual_appointments import router as manual_appointments_router
 from routes.baileys_routes import router as baileys_router
 from routes.excluded_chats_routes import router as excluded_chats_router
@@ -36,7 +36,6 @@ from routes.home_visit_zones_routes import router as home_visit_zones_router
 from routes.wompi_settings_routes import router as wompi_settings_router
 from routes.wompi_payment_requests_routes import router as wompi_payment_requests_router
 from routes.wompi_webhook_routes import router as wompi_webhook_router
-from services.wompi_payment_requests import expirar_solicitudes_vencidas
 
 
 load_dotenv()
@@ -287,19 +286,12 @@ def test_reminders():
 
 
 # ---------------------------------------------------------
-# Scheduler: revisa cada 5 minutos si hay recordatorios pendientes, y cada
-# 15 minutos expira las solicitudes de pago de Wompi vencidas (ver
-# services/wompi_payment_requests.py:expirar_solicitudes_vencidas).
+# Tareas en segundo plano (calendario en services/tareas_periodicas.py).
+#
+# - TAREAS_EN_SEGUNDO_PLANO=api (por defecto): un APScheduler dentro de este proceso las ejecuta.
+# - TAREAS_EN_SEGUNDO_PLANO=worker: esta API NO programa nada; las ejecuta el worker aparte
+#   (worker.py + scheduler.py). Ver docs/WORKER_Y_TAREAS.md.
 # ---------------------------------------------------------
 scheduler = BackgroundScheduler()
-scheduler.add_job(revisar_y_enviar_recordatorios, "interval", minutes=5)
-scheduler.add_job(expirar_solicitudes_vencidas, "interval", minutes=15)
-# Retencion de conversaciones: una vez al dia (la hora se fija aparte del plazo). El cron y
-# no un intervalo, porque cada despliegue reinicia el proceso y un intervalo de 24 h nunca
-# llegaria a cumplirse; misfire_grace_time lo deja correr si el proceso estaba reiniciando.
-scheduler.add_job(
-    limpiar_conversaciones_vencidas, "cron", hour=CHAT_LIMPIEZA_HORA_UTC, minute=0, misfire_grace_time=3600
-)
-scheduler.start()
-
-atexit.register(lambda: scheduler.shutdown())
+if iniciar_tareas_en_la_api(scheduler, TAREAS_EN_SEGUNDO_PLANO):
+    atexit.register(lambda: scheduler.shutdown())

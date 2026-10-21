@@ -398,10 +398,15 @@ def test_endpoints_internos_de_prueba(cliente, negocio, db, monkeypatch):
 
 
 def test_scheduler_registra_los_jobs():
+    """Modo "api" (por defecto): el APScheduler de la API ejecuta cada tarea directamente."""
     import main
     from services.reminder_service import revisar_y_enviar_recordatorios
+    from services.retencion_conversaciones import limpiar_conversaciones_vencidas
     from services.wompi_payment_requests import expirar_solicitudes_vencidas
 
-    jobs = {job[0]: job[2] for job in main.scheduler.jobs}
-    assert jobs[revisar_y_enviar_recordatorios] == {"minutes": 5}
-    assert jobs[expirar_solicitudes_vencidas] == {"minutes": 15}
+    jobs = {job[0]: (job[1], job[2]) for job in main.scheduler.jobs}
+    assert jobs[revisar_y_enviar_recordatorios][0] == ("interval",)
+    assert jobs[revisar_y_enviar_recordatorios][1]["minutes"] == 5
+    assert jobs[expirar_solicitudes_vencidas][1]["minutes"] == 15
+    assert jobs[limpiar_conversaciones_vencidas][0] == ("cron",)
+    assert jobs[limpiar_conversaciones_vencidas][1]["hour"] == 8 and jobs[limpiar_conversaciones_vencidas][1]["misfire_grace_time"] == 3600
