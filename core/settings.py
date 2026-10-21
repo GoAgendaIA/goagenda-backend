@@ -110,3 +110,25 @@ def _tasa_cop_por_usd() -> float:
 
 
 COP_POR_USD = _tasa_cop_por_usd()
+
+
+# ---------------------------------------------------------------------
+# Tareas en segundo plano (recordatorios, expiracion de pagos, retencion de conversaciones).
+#
+# "api" (por defecto): las programa un APScheduler DENTRO del proceso de la API, como siempre. Sirve
+#     mientras haya UNA sola instancia de la API.
+# "worker": la API NO programa nada; un proceso aparte (worker.py + scheduler.py, ver docs/WORKER_Y_TAREAS.md)
+#     las ejecuta con Dramatiq y Redis. Es lo que se usa cuando API y worker se despliegan por separado.
+#
+# Con "worker" hay que desplegar el worker, o las tareas dejan de correr. Nunca activar el modo "api" en la
+# API y a la vez un worker: los recordatorios saldrian duplicados.
+# ---------------------------------------------------------------------
+def _modo_de_tareas(valor: str | None) -> str:
+    modo = (valor or "api").strip().lower()
+    return modo if modo in ("api", "worker") else "api"
+
+
+TAREAS_EN_SEGUNDO_PLANO = _modo_de_tareas(os.getenv("TAREAS_EN_SEGUNDO_PLANO"))
+
+# Broker de Dramatiq (solo lo usa el worker y el scheduler). Ej.: redis://redis:6379/0 o rediss://... (Redis Cloud).
+REDIS_URL = os.getenv("REDIS_URL")
