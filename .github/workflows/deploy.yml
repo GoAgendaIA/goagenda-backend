@@ -4,8 +4,11 @@ on:
   push:
     branches: [main]
   # Las pruebas tambien corren en cada PR (a cualquier base: hay PR apilados).
-  # Los jobs de build y deploy solo corren en push a main (ver su `if`).
+  # Los jobs de build y deploy solo corren en main: push o disparo manual (ver su `if`).
   pull_request:
+  # Reconstruir y desplegar desde GitHub (Actions > Test, Build and Deploy > Run workflow) sin hacer
+  # un commit. Solo publica y despliega desde main (ver los `if` de build y deploy).
+  workflow_dispatch:
 
 # Un push nuevo a un PR cancela la corrida anterior de ese PR; en main nunca se
 # cancela una corrida en curso (podria cortar un deploy a medias).
@@ -45,7 +48,7 @@ jobs:
 
   build-and-push:
     # Solo en main: un PR nunca publica imagenes ni toca el registro.
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-latest
     permissions:
@@ -82,7 +85,7 @@ jobs:
 
   deploy:
     # Solo en main: un PR nunca despliega.
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
