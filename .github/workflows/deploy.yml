@@ -13,8 +13,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  IMAGE_NAME: ghcr.io/${{ github.repository }}
+# El nombre de la imagen se calcula en minusculas en el job de build: Docker rechaza nombres con
+# mayusculas y la organizacion se llama "GoAgendaIA" (github.repository = "GoAgendaIA/...").
 
 jobs:
   # Las pruebas corren primero: si alguna falla, o la cobertura baja de 90%
@@ -54,6 +54,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Nombre de la imagen (ghcr.io/<owner>/<repo> en minusculas)
+        run: echo "IMAGE_NAME=ghcr.io/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
@@ -72,6 +75,8 @@ jobs:
           tags: |
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -104,4 +109,6 @@ jobs:
             ProxyCommand cloudflared access ssh --hostname %h
             StrictHostKeyChecking no
           EOF
-          ssh goagenda "cd /opt/goagenda/backend && docker compose pull && docker compose up -d --remove-orphans && docker image prune -f"
+          # El pull puede fallar de forma transitoria en el daemon del VPS
+          # ("failed to lease content: NotFound"); se reintenta antes de rendirse.
+          ssh goagenda 'cd /opt/goagenda/backend && for intento in 1 2 3; do docker compose pull && break; echo "pull fallo (intento $intento/3), reintentando en 15s"; [ "$intento" = 3 ] && exit 1; sleep 15; done && docker compose up -d --remove-orphans && docker image prune -f'
