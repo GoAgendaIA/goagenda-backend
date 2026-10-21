@@ -35,7 +35,9 @@ _OPCIONES = dict(queue_name="tareas", max_retries=3, min_backoff=30_000, max_bac
 
 def _definir_actor(tarea):
     def ejecutar():
-        return tarea.callable()()
+        # Sin `return`: Dramatiq avisa (WARNING en cada ejecucion) cuando un actor devuelve un valor y no hay
+        # middleware de resultados. El resumen de cada tarea ya queda en el log de la propia tarea.
+        tarea.callable()()
 
     ejecutar.__name__ = f"tarea_{tarea.nombre}"
     return dramatiq.actor(**_OPCIONES)(ejecutar)

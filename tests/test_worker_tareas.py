@@ -109,7 +109,8 @@ def test_un_actor_ejecuta_la_funcion_real_de_su_tarea(monkeypatch):
 
     llamadas = []
     monkeypatch.setattr(reminder_service, "revisar_y_enviar_recordatorios", lambda: llamadas.append("ok") or 7)
-    assert worker.ACTORES["recordatorios"].fn() == 7 and llamadas == ["ok"]
+    # Devuelve None: si devolviera el 7, Dramatiq registraria un WARNING en cada ejecucion en produccion.
+    assert worker.ACTORES["recordatorios"].fn() is None and llamadas == ["ok"]
 
 
 def test_el_worker_y_el_scheduler_no_cargan_el_agente_ni_el_pool_de_postgres(tmp_path):
