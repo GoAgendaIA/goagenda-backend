@@ -85,9 +85,10 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    # Un deploy normal tarda ~1 min. Si algo se cuelga en el VPS (un pull que no avanza), se corta aqui en vez de gastar
+    # Un deploy normal tarda ~1 min, pero si cambian las dependencias hay que bajar capas nuevas de cientos de MB y la
+    # descarga al VPS puede pasar de 10 min. Si algo de verdad se cuelga, se corta aqui en vez de gastar
     # minutos de Actions durante horas (el limite por defecto de un job es 6 h).
-    timeout-minutes: 8
+    timeout-minutes: 20
     # Solo en main: un PR nunca despliega.
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build-and-push
@@ -120,4 +121,4 @@ jobs:
           EOF
           # El pull puede fallar de forma transitoria en el daemon del VPS
           # ("failed to lease content: NotFound"); se reintenta antes de rendirse.
-          ssh goagenda 'cd /opt/goagenda/backend && for intento in 1 2 3; do timeout 240 docker compose pull && break; echo "pull fallo (intento $intento/3), reintentando en 15s"; [ "$intento" = 3 ] && exit 1; sleep 15; done && docker compose up -d --remove-orphans && docker image prune -f'
+          ssh goagenda 'cd /opt/goagenda/backend && for intento in 1 2 3; do timeout 420 docker compose pull && break; echo "pull fallo (intento $intento/3), reintentando en 15s"; [ "$intento" = 3 ] && exit 1; sleep 15; done && docker compose up -d --remove-orphans && docker image prune -f'
