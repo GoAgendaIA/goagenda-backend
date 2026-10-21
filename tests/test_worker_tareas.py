@@ -112,7 +112,7 @@ def test_un_actor_ejecuta_la_funcion_real_de_su_tarea(monkeypatch):
     assert worker.ACTORES["recordatorios"].fn() == 7 and llamadas == ["ok"]
 
 
-def test_el_worker_y_el_scheduler_no_cargan_el_agente_ni_el_pool_de_postgres():
+def test_el_worker_y_el_scheduler_no_cargan_el_agente_ni_el_pool_de_postgres(tmp_path):
     """
     Importar el agente abre un pool de Postgres (el pooler de Supabase admite 15 conexiones en total entre
     todos los procesos). Se comprueba en un proceso limpio, sin los modulos que ya cargaron otras pruebas.
@@ -128,9 +128,14 @@ def test_el_worker_y_el_scheduler_no_cargan_el_agente_ni_el_pool_de_postgres():
         "print('agent' in {m.split('.')[0] for m in sys.modules}, 'psycopg_pool' in sys.modules)\n"
     )
     entorno = {"PATH": "/usr/bin:/bin", "DATABASE_URL": "postgresql://u:p@h:5432/d", "REDIS_URL": "redis://r:6379/0",
-               "SUPABASE_URL": "https://abc.supabase.co", "SUPABASE_KEY": "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.x"}
+               "SUPABASE_URL": "https://abc.supabase.co", "SUPABASE_KEY": "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.x",
+               # Las tareas de pagos importan el modulo de Wompi, que exige su llave de cifrado: el worker la necesita.
+               "WOMPI_ENCRYPTION_KEY": "x" * 43 + "="}
+    # cwd en una carpeta vacia: asi load_dotenv no encuentra el .env del desarrollador (la prueba no debe depender de el
+    # ni de produccion); el codigo se importa por PYTHONPATH.
+    entorno["PYTHONPATH"] = str(__import__("pathlib").Path(__file__).resolve().parent.parent)
     resultado = subprocess.run([sys.executable, "-c", codigo], capture_output=True, text=True, env=entorno, timeout=60,
-                               cwd=str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+                               cwd=str(tmp_path))
     assert resultado.returncode == 0, resultado.stderr[-500:]
     assert resultado.stdout.strip().splitlines()[-1] == "False False"
 

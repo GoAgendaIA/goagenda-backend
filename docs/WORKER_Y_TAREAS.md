@@ -29,7 +29,9 @@ Se elige con `TAREAS_EN_SEGUNDO_PLANO`:
 - `start_worker.sh`: lanza los dos y, **si cualquiera muere, apaga el otro y termina con error** para que la plataforma reinicie el
   contenedor (un worker sin scheduler, o al revés, dejaría de enviar recordatorios sin avisar).
 - **Una sola réplica y `--processes 1`**: es lo que impide los recordatorios duplicados.
-- Variables: `REDIS_URL` (obligatoria), más las de siempre (`SUPABASE_*`, `WHATSAPP_*`, `GOAGENDA_*`, `DATABASE_URL`…).
+- Variables: `REDIS_URL` (obligatoria), más las de siempre (`SUPABASE_*`, `DATABASE_URL`, `WHATSAPP_*`, `GOAGENDA_*`, `FIREBASE_CREDENTIALS_JSON`).
+  **`WOMPI_ENCRYPTION_KEY` también es obligatoria en el worker** (y debe ser **la misma** que la de la API): la tarea de expirar pagos
+  importa el módulo de Wompi, que se niega a arrancar sin ella.
 - Las tareas son idempotentes: un recordatorio enviado queda marcado y un pago expirado ya no está pendiente.
 
 **Conexiones a Postgres:** `recordatorios` y `expirar_pagos` no cargan el agente (hay una prueba que lo verifica). Solo
