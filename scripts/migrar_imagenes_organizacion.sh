@@ -32,11 +32,24 @@ archivo_compose() {
   return 1
 }
 
+# true si la imagen (ghcr.io/<owner>/<repo>) tiene :latest y se puede descargar SIN credenciales:
+# pide un token anonimo a GHCR y consulta el manifiesto, igual que haria un `docker pull` anonimo.
+# (`docker manifest inspect` no sirve aqui: puede responder "denied" aunque la imagen sea publica.)
+imagen_publica() {
+  local ruta="${1#ghcr.io/}" token
+  token="$(curl -fsS "https://ghcr.io/token?scope=repository:${ruta}:pull&service=ghcr.io" 2>/dev/null \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("token",""))' 2>/dev/null)" || return 1
+  [ -n "$token" ] || return 1
+  [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" \
+      -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+      "https://ghcr.io/v2/${ruta}/manifests/latest")" = "200" ]
+}
+
 # 1) Las imagenes nuevas existen y son publicas (se consultan sin credenciales).
 echo "== Comprobando las imagenes de la organizacion =="
 for s in "${SERVICIOS[@]}"; do
   IFS='|' read -r _ _ nueva <<< "$s"
-  if DOCKER_CONFIG="$(mktemp -d)" docker manifest inspect "$nueva:latest" >/dev/null 2>&1; then
+  if imagen_publica "$nueva"; then
     echo "  ✓ $nueva:latest (publica)"
   else
     echo "  ✗ $nueva:latest no existe o no es publica."
