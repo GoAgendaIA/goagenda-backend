@@ -1,0 +1,49 @@
+name: Production (Seenode)
+
+# Un push a `production` corre las pruebas (con la misma cobertura minima que main); solo si pasan,
+# avanza la rama `release`. Seenode vigila `release` (auto_deploy) y construye/despliega la API y el
+# worker desde ahi, asi que un commit con pruebas rojas nunca llega a produccion.
+on:
+  push:
+    branches: [production]
+
+# Dos pushes seguidos no se pisan: se espera a que termine el anterior en vez de cancelarlo.
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Instalar dependencias
+        run: pip install -r requirements-dev.txt
+
+      - name: Correr pruebas con cobertura
+        run: pytest --cov --cov-report=term-missing
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # `release` solo la mueve este workflow. --force-with-lease evita pisar un cambio hecho a mano.
+      - name: Avanzar release al commit probado
+        run: git push origin "$GITHUB_SHA:refs/heads/release" --force-with-lease
