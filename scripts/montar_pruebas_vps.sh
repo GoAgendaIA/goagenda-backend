@@ -205,12 +205,16 @@ PY
   $SUDO cp "$CF_CONFIG" "$CF_CONFIG.bak.$ESTAMPA"
   $SUDO cp "$CF_NUEVO" "$CF_CONFIG"
   rm -f "$CF_NUEVO"
-  if $SUDO systemctl restart cloudflared && sleep 3 && $SUDO systemctl is-active --quiet cloudflared; then
-    ok "tunel reiniciado con $HOST_API"
+  # Tu sesion SSH entra POR este tunel: reiniciarlo la corta y mataria al script antes de comprobar nada. Por eso el
+  # reinicio y su reversa corren en una unidad de systemd aparte, que sobrevive al corte; su resultado queda en el
+  # journal (journalctl -u goagenda-reinicio-tunel).
+  REINICIO="systemctl restart cloudflared; sleep 5; systemctl is-active --quiet cloudflared || { cp '$CF_CONFIG.bak.$ESTAMPA' '$CF_CONFIG'; systemctl restart cloudflared; echo 'cloudflared no arranco con el config nuevo: restaurado el anterior'; exit 1; }; echo 'tunel reiniciado con $HOST_API'"
+  if command -v systemd-run >/dev/null; then
+    $SUDO systemd-run --quiet --unit="goagenda-reinicio-tunel-$ESTAMPA" bash -c "$REINICIO" \
+      && ok "reinicio del tunel programado (puede cortar esta sesion SSH: reconecta y revisa: journalctl -u goagenda-reinicio-tunel-$ESTAMPA)" \
+      || falla "no se pudo programar el reinicio del tunel; el config nuevo ya esta puesto (restauralo con --revertir)."
   else
-    $SUDO cp "$CF_CONFIG.bak.$ESTAMPA" "$CF_CONFIG"
-    $SUDO systemctl restart cloudflared || true
-    falla "cloudflared no quedo activo con el config nuevo; se restauro el anterior."
+    $SUDO bash -c "$REINICIO" && ok "tunel reiniciado con $HOST_API"
   fi
 fi
 
