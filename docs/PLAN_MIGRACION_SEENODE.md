@@ -187,6 +187,7 @@ Variables de entorno marcadas como secretas en Seenode (`KEY*=valor`).
   1. Crear el proyecto de pruebas y aplicar todos los `.sql`.
   2. El proyecto actual **pasa a ser producción** (no se migran datos), y el
      de pruebas es el nuevo. Así no hay migración de datos de clientes.
+     **Decidido (2026-10-21).** Ver `docs/ORDEN_MIGRACIONES.md` para clonar el esquema y hacer respaldos.
   3. Configurar en pruebas negocios y usuarios de ejemplo.
 
 ## 8. Fases y orden de trabajo
