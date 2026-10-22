@@ -121,4 +121,4 @@ jobs:
           EOF
           # El pull puede fallar de forma transitoria en el daemon del VPS
           # ("failed to lease content: NotFound"); se reintenta antes de rendirse.
-          ssh goagenda 'cd /opt/goagenda/backend && for intento in 1 2 3; do timeout 420 docker compose pull && break; echo "pull fallo (intento $intento/3), reintentando en 15s"; [ "$intento" = 3 ] && exit 1; sleep 15; done && docker compose up -d --remove-orphans && docker image prune -f'
+          ssh goagenda 'cd /opt/goagenda/backend && for intento in 1 2 3; do timeout 420 docker compose pull && break; echo "pull fallo (intento $intento/3), reintentando en 15s"; [ "$intento" = 3 ] && exit 1; sleep 15; done && docker compose up -d --remove-orphans && docker image prune -f && { if [ -d /opt/goagenda/pruebas ] && [ -f /opt/goagenda/pruebas/.env ]; then cd /opt/goagenda/pruebas && docker compose pull api-pruebas && docker compose up -d api-pruebas || echo "api-pruebas no se pudo actualizar (no afecta a produccion)"; fi; }'
