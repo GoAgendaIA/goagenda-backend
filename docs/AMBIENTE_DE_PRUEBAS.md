@@ -30,7 +30,7 @@ bash scripts/montar_pruebas_vps.sh --revertir
 
 Cada cambio guarda copia: el sitio PHP viejo de `pruebas.` queda en `/etc/nginx/respaldos-pruebas/` (no se borra
 `/var/www`) y el config del tunel en `/etc/cloudflared/config.yml.bak.<fecha>`. Reiniciar `cloudflared` corta el tunel unos
-segundos (tambien el de produccion), por eso el script pide confirmacion.
+segundos (tambien el de produccion) y **tu sesion SSH, que entra por ese mismo tunel**: por eso el script pide confirmacion y hace el reinicio (con su reversa si `cloudflared` no arranca) en una unidad de systemd aparte. Al reconectar, el resultado esta en `journalctl -u goagenda-reinicio-tunel-<fecha>`.
 
 Pendiente a mano:
 1. DNS en Cloudflare: CNAME `api-pruebas` → `<id-del-tunel>.cfargotunnel.com` (con proxy). `pruebas` ya existe.

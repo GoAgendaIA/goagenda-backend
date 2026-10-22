@@ -34,7 +34,7 @@ def vps(tmp_path):
     bin_ = tmp_path / "bin"
     bin_.mkdir()
     log = tmp_path / "llamadas.log"
-    for nombre in ("docker", "systemctl", "curl", "cloudflared"):
+    for nombre in ("docker", "systemctl", "systemd-run", "curl", "cloudflared"):
         (bin_ / nombre).write_text(f'#!/bin/bash\necho "{nombre} $*" >> "{log}"\n')
     # nginx -t falla si existe la marca; asi se prueba el retroceso.
     (bin_ / "nginx").write_text(f'#!/bin/bash\necho "nginx $*" >> "{log}"\n[ -f "{tmp_path}/nginx_falla" ] && exit 1\nexit 0\n')
@@ -148,7 +148,7 @@ def test_el_tunel_agrega_api_pruebas_antes_de_la_regla_final_y_conserva_lo_demas
     for host in ("app.goagenda.online", "pruebas.goagenda.online", "api.goagenda.online"):
         assert f"hostname: {host}" in nuevo
     assert list(vps.raiz.glob("config.yml.bak.*"))  # copia del tunel anterior
-    assert "systemctl restart cloudflared" in vps.llamadas()
+    assert "systemd-run" in vps.llamadas() and "restart cloudflared" in vps.llamadas()  # unidad aparte: sobrevive al corte del SSH
 
 
 def test_es_idempotente_la_segunda_corrida_no_reinicia_el_tunel_ni_pisa_el_compose(vps):
@@ -158,7 +158,7 @@ def test_es_idempotente_la_segunda_corrida_no_reinicia_el_tunel_ni_pisa_el_compo
     (vps.raiz / "llamadas.log").unlink()
     r = vps.correr()
     assert r.returncode == 0
-    assert "restart cloudflared" not in vps.llamadas()
+    assert "cloudflared" not in vps.llamadas().replace("cloudflared tunnel", "")
     assert "# editado a mano" in compose.read_text()
     assert vps.config_tunel.read_text().count("api-pruebas.goagenda.online") == 1
 
@@ -171,7 +171,7 @@ def test_si_nginx_rechaza_la_configuracion_se_restaura_el_sitio_php_y_no_se_toca
     assert (vps.sitios_nginx / "pruebas").exists()
     assert not (vps.sitios_nginx / "goagenda-pruebas").exists()
     assert vps.config_tunel.read_text() == antes
-    assert "restart cloudflared" not in vps.llamadas()
+    assert "cloudflared" not in vps.llamadas().replace("cloudflared tunnel", "")
 
 
 def test_si_no_hay_confirmacion_el_tunel_queda_igual(vps):
